@@ -41,7 +41,7 @@ function simulate_events!(problem::DispatchProblem,
     dispatch_col = symbol("$(model_name)_dispatch")
     delay_col = symbol("$(model_name)_delay")
     problem.emergency_calls[dispatch_col] = 0
-    problem.emergency_calls[delay_col] = 0
+    problem.emergency_calls[delay_col] = 1000.0 # Inf; should be filled with smaller values after
 
     while !isempty(events)
         (id, t, value) = dequeue!(events)
@@ -68,7 +68,7 @@ function simulate_events!(problem::DispatchProblem,
                     @assert delay >= 0
                 end
                 delay += ceil(Int,60*problem.emergency_calls[id, i+2]) # include road travel time
-                problem.emergency_calls[id, delay_col] = delay
+                problem.emergency_calls[id, delay_col] = delay / 60 # express in terms of minutes
                 verbose && (delay  > 0) && println("time $t:   send from $(problem.amb_queue[i])")
                 verbose && (delay == 0) && println("time $t:   ambulance dispatched from $i")
 

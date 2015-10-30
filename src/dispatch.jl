@@ -29,6 +29,7 @@ function LPDispatchGreedy(p::DeploymentProblem,
     demand = vec(mean(p.demand[p.train,:],1))
     I = 1:p.nlocations ; J = 1:p.nregions
     m = JuMP.Model(solver=solver)
+    JuMP.@defVar(m, x[1:p.nlocations] >= 0)
     JuMP.@defVar(m, y[1:p.nlocations,1:p.nregions] >= 0)
     JuMP.@defVar(m, z[1:p.nregions] >= 0)
     JuMP.@setObjective(m, Min, sum{z[j], j=J} + tol*sum{y[i,j], i=I, j=J})
@@ -57,6 +58,7 @@ function LPDispatchRandom(p::DeploymentProblem,
     demand = vec(mean(p.demand[p.train,:],1))
     I = 1:p.nlocations ; J = 1:p.nregions
     m = JuMP.Model(solver=solver)
+    JuMP.@defVar(m, x[1:p.nlocations] >= 0)
     JuMP.@defVar(m, y[1:p.nlocations,1:p.nregions] >= 0)
     JuMP.@defVar(m, z[1:p.nregions] >= 0)
     JuMP.@setObjective(m, Min, sum{z[j], j=J} + tol*sum{y[i,j], i=I, j=J})
@@ -85,6 +87,7 @@ function LPDispatchBacklog(p::DeploymentProblem,
     demand = vec(mean(p.demand[p.train,:],1))
     I = 1:p.nlocations ; J = 1:p.nregions
     m = JuMP.Model(solver=solver)
+    JuMP.@defVar(m, x[1:p.nlocations] >= 0)
     JuMP.@defVar(m, y[1:p.nlocations,1:p.nregions] >= 0)
     JuMP.@defVar(m, yb[1:p.nlocations,1:p.nregions] >= 0)
     JuMP.@defVar(m, z[1:p.nregions] >= 0)
@@ -164,12 +167,17 @@ end
 
 function available_for(model::LPDispatchGreedy, j::Int, problem::DispatchProblem)
     # when an emergency call arrives from region j
-    candidate = model.candidates[j]
-    # order the candidates in decreasing "desirability"
-    yvalues = sortperm(0.0 .- JuMP.getValue(model.y[model.candidates[j],j]))
-    for i in yvalues
-        if problem.available[candidate[i]] > 0 # send the most "desirable" one
-            return candidate[i]
+    candidates = model.candidates[j]
+    yvalues = JuMP.getValue(model.y[candidates,j])
+    for (yi,xi) in enumerate(candidates)
+        if problem.available[xi] > 0
+            yvalues[yi] = yvalues[yi] / problem.available[xi]
+        end
+    end
+    yindices = sortperm(yvalues) # order the candidates in decreasing "desirability"
+    for i in yindices
+        if problem.available[candidates[i]] > 0 # send the most "desirable" one
+            return candidates[i]
         end
     end
     # if no ambulance is available
@@ -177,30 +185,42 @@ function available_for(model::LPDispatchGreedy, j::Int, problem::DispatchProblem
 end
 
 function available_for(model::LPDispatchRandom, j::Int, problem::DispatchProblem)
-    candidate = model.candidates[j]
-    yvalues = JuMP.getValue(model.y[model.candidates[j],j])
-    if sum(yvalues) < 1e-6
-        for i in model.candidates[j] # if the differences are too small
+    candidates = model.candidates[j]
+    yvalues = JuMP.getValue(model.y[candidates,j])
+    if sum(yvalues) < 1e-6 # if the differences are too small
+        for i in candidates
             if problem.available[i] > 0
                 return i
             end
         end
         return 0
     else
+        for (yi,xi) in enumerate(candidates)
+            if problem.available[xi] > 0
+                yvalues[yi] = yvalues[yi] / problem.available[xi]
+            end
+        end
         i = Distributions.sample(StatsBase.WeightVec(yvalues))
-        return model.candidates[j][i]
+        return candidates[i]
     end
 end
 
 function available_for(model::LPDispatchBacklog, j::Int, problem::DispatchProblem)
     # when an emergency call arrives from region j
-    candidate = model.candidates[j]
-    # order the candidates in decreasing "desirability"
+    candidates = model.candidates[j]
     fwd_values = JuMP.getValue(model.y[model.candidates[j],j])
     bwd_values = JuMP.getValue(model.yb[model.candidates[j],j])
-    yvalues = sortperm(0.0 .- fwd_values .+ bwd_values)
-    for i in yvalues
-        if problem.available[candidate[i]] > 0 # send the most "desirable" one
+
+    yvalues = fwd_values - bwd_values
+    for (yi,xi) in enumerate(candidates)
+        if problem.available[xi] > 0
+            yvalues[yi] = yvalues[yi] / problem.available[xi]
+        end
+    end
+
+    yindices = sortperm(-yvalues)  # order the candidates in decreasing "desirability"
+    for i in yindices
+        if problem.available[candidate[i]] > 0
             return candidate[i]
         end
     end
