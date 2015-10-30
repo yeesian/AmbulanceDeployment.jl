@@ -22,40 +22,96 @@ end
 type Evaluation
     objvalue::Int
     shortfall::Vector{Int}
-    dispatch::Vector{Int}
+    dispatch::Matrix{Int}
 end
 
-function evaluate{T1, T2 <: Real}(
-    x::Vector{T1},
-    scenario::Vector{T2},
-    p::DeploymentProblem;
+function evaluate{T1, T2 <: Real}(x::Vector{T1}, scenario::Vector{T2}, p::DeploymentProblem;
     solver=GurobiSolver(OutputFlag=0,PrePasses=3))
 
     I = 1:p.nlocations
     J = 1:p.nregions
 
-    m = Model(solver=solver)
-    @defVar(m, y[1:p.nlocations,1:p.nregions] >= 0, Int)
-    @defVar(m, z[1:p.nregions] >= 0, Int)
+    m = JuMP.Model(solver=solver)
+    JuMP.@defVar(m, y[1:p.nlocations,1:p.nregions] >= 0, Int)
+    JuMP.@defVar(m, z[1:p.nregions] >= 0, Int)
 
-    @setObjective(m, Min, sum{z[j], j in J})
+    JuMP.@setObjective(m, Min, sum{z[j], j in J})
 
     # flow constraints at each station
     for i in I
-        @defExpr(outflow, sum{y[i,j], j in filter(j->p.coverage[j,i], J)})
-        @addConstraint(m, x[i] >= outflow)
+        JuMP.@defExpr(outflow, sum{y[i,j], j in filter(j->p.coverage[j,i], J)})
+        JuMP.@addConstraint(m, x[i] >= outflow)
     end
-
     # shortfall from satisfying demand/calls
     for j in J
-        @defExpr(inflow, sum{y[i,j], i in filter(i->p.coverage[j,i], I)})
-        @addConstraint(m, z[j,t] >= scenario[j] - inflow)
+        JuMP.@defExpr(inflow, sum{y[i,j], i in filter(i->p.coverage[j,i], I)})
+        JuMP.@addConstraint(m, z[j] >= scenario[j] - inflow)
     end
+    status = JuMP.solve(m)
+    @assert status == :Optimal
 
-    Evaluation(int(getObjectiveValue(m)),
-               map(int,getValue(z)[:]),
-               map(int,getValue(y)[:]))
+    Evaluation(Int(JuMP.getObjectiveValue(m)),
+               [round(Int,z) for z in JuMP.getValue(z)],
+               map(y->round(Int,y), JuMP.getValue(y)))
 end
 
-evaluate{T1, T2 <: Real}(x::Vector{T1}, scenarios::Vector{Vector{T2}}) = Evaluation[evaluate(x,scene) for scene in scenarios]
+function evaluate{T <: Real}(x::Vector{T}, p::DeploymentProblem)
+    Evaluation[evaluate(x,vec(p.demand[i,:]),p) for i in p.test]
+end
+
+type Result
+    stoch_x
+    robust_x
+    bad_scenarios
+    upperbounds
+    lowerbounds
+    stoch_timing
+    robust_timing
+end
+
+function performance(p::DeploymentProblem, α::Float64; verbose=false)
+    stoch_model = StochasticDeployment(p)
+    tic()
+    solve(stoch_model)
+    stoch_timing = toq()
+    robust_model = RobustDeployment(p, α=α, verbose=verbose, master_verbose=verbose)
+    tic()
+    solve(robust_model, p, verbose=verbose)
+    robust_timing = toq()
+    Result( deployment(stoch_model),
+            deployment(robust_model),
+            robust_model.scenarios,
+            robust_model.upperbounds,
+            robust_model.lowerbounds,
+            stoch_timing,
+            robust_timing)
+end
+
+function test_performance(p::DeploymentProblem; namb::Vector{Int}=[25:5:45], alpha::Vector{Float64}=[0.1,0.05,0.01,0.001,0.0001], verbose=false)
+    results = Array(Result, (5,5))
+    for (i,n) in enumerate(namb)
+        print(n)
+        p.nambulances = n
+        stoch_model = StochasticDeployment(p)
+        tic()
+        solve(stoch_model)
+        stoch_timing = toq()
+        for (j,α) in enumerate(alpha)
+            print(" $α")
+            robust_model = RobustDeployment(p, α=α, verbose=verbose, master_verbose=verbose)
+            tic()
+            solve(robust_model, p, verbose=verbose)
+            robust_timing = toq()
+            results[i,j] = Result(  deployment(stoch_model),
+                                    deployment(robust_model),
+                                    robust_model.scenarios,
+                                    robust_model.upperbounds,
+                                    robust_model.lowerbounds,
+                                    stoch_timing,
+                                    robust_timing)
+        end
+        println("")
+    end
+    results
+end
 
