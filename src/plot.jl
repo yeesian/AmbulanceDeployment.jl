@@ -57,6 +57,17 @@ function compose_neighborhoods{T <: Real}(df::DataFrame, values::Vector{T}; fill
     c
 end
 
+function compose_neighborhoods_nominal{T <: Real}(df::DataFrame, values::Vector{T}; fill_color::AbstractString = "blue", stroke_color::AbstractString = "black")
+    dims = UnitBox(-77.116634,38.99596,0.207479,-0.19287) # WashingtonDC
+    template = context(units=dims)
+    c = template
+    grad = lab_gradient(parse(Colorant, "white"),parse(Colorant, fill_color))
+    for (row,p) in enumerate(df[:geometry])
+        c = compose(c,compose(template, composeform(p), linewidth(0.05mm), stroke(parse(Colorant, stroke_color)), fill(grad(values[row]))))
+    end
+    c
+end
+
 function compose_locations(df::DataFrame; nambs=[0.001], fill_color=LCHab(78, 84, 29))
     template = context(units=UnitBox(-77.116634,38.99596,0.207479,-0.19287)) # WashingtonDC
     compose(template, compose( template,

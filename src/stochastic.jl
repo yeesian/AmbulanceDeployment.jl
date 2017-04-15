@@ -2,7 +2,7 @@ type StochasticDeployment <: DeploymentModel
     m::JuMP.Model
     x::Vector{JuMP.Variable}
 end
-deployment(m::StochasticDeployment) = [round(Int,x) for x in JuMP.getValue(m.x)]
+deployment(m::StochasticDeployment) = [round(Int,x) for x in JuMP.getvalue(m.x)]
 
 function StochasticDeployment(p::DeploymentProblem; nperiods=params.nperiods, tol=params.δ,
     solver=GurobiSolver(OutputFlag=0))
@@ -14,28 +14,28 @@ function StochasticDeployment(p::DeploymentProblem; nperiods=params.nperiods, to
     T = 1:nperiods
 
     m = JuMP.Model(solver=solver)
-    JuMP.@defVar(m, x[1:p.nlocations] >= 0, Int)
-    JuMP.@defVar(m, y[1:p.nlocations,1:p.nregions,1:nperiods] >= 0, Int)
-    JuMP.@defVar(m, z[1:p.nregions,1:nperiods] >= 0, Int)
+    JuMP.@variable(m, x[1:p.nlocations] >= 0, Int)
+    JuMP.@variable(m, y[1:p.nlocations,1:p.nregions,1:nperiods] >= 0, Int)
+    JuMP.@variable(m, z[1:p.nregions,1:nperiods] >= 0, Int)
 
-    JuMP.@setObjective(m, Min, sum{z[j,t], j=J, t=T} + tol*sum{y[i,j,t], i=I, j=J, t=T})
+    JuMP.@objective(m, Min, sum(z[j,t] for j=J, t=T) + tol*sum(y[i,j,t] for i=I, j=J, t=T))
 
-    JuMP.@addConstraint(m, sum{x[i], i=I} <= p.nambulances)
+    JuMP.@constraint(m, sum(x[i] for i=I) <= p.nambulances)
 
     for j in J # coverage over all regions
-        JuMP.@addConstraint(m, sum{x[i], i in filter(i->p.coverage[j,i], I)} >= 1)
+        JuMP.@constraint(m, sum(x[i] for i in filter(i->p.coverage[j,i], I)) >= 1)
     end
 
     # flow constraints at each station
     for i in I, t in T
-        JuMP.@defExpr(outflow, sum{y[i,j,t], j in filter(j->p.coverage[j,i], J)})
-        JuMP.@addConstraint(m, x[i] >= outflow)
+        JuMP.@expression(m, outflow, sum(y[i,j,t] for j in filter(j->p.coverage[j,i], J)))
+        JuMP.@constraint(m, x[i] >= outflow)
     end
 
     # shortfall from satisfying demand/calls
     for j in J, t in T
-        JuMP.@defExpr(inflow, sum{y[i,j,t], i in filter(i->p.coverage[j,i], I)})
-        JuMP.@addConstraint(m, z[j,t] >= demand[t,j] - inflow)
+        JuMP.@expression(m, inflow, sum(y[i,j,t] for i in filter(i->p.coverage[j,i], I)))
+        JuMP.@constraint(m, z[j,t] >= demand[t,j] - inflow)
     end
 
     StochasticDeployment(m, x)

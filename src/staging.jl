@@ -60,14 +60,14 @@ end
 
 function simulate_events!(problem::DispatchProblem,
                           model::DispatchModel,
-                          model_name::ASCIIString="model",
+                          model_name::String="model",
                           verbose::Bool=false)
     
     amb_allocation = copy(problem.available) # for checking of invariance properties
     events = form_queue(problem.emergency_calls)
     ncalls = nrow(problem.emergency_calls)
-    dispatch_col = symbol("$(model_name)_dispatch")
-    delay_col = symbol("$(model_name)_delay")
+    dispatch_col = Symbol("$(model_name)_dispatch")
+    delay_col = Symbol("$(model_name)_delay")
     problem.emergency_calls[dispatch_col] = 0
     problem.emergency_calls[delay_name] = 0
 

@@ -16,14 +16,14 @@ function DSMDeployment(p::DeploymentProblem,
     K = 1:max_amb
 
     m = JuMP.Model(solver=solver)
-    JuMP.@defVar(m, x[1:p.nlocations] >= 0, Int)
-    JuMP.@defVar(m, z[1:p.nregions, 1:max_amb] >= 0, Bin)
+    JuMP.@variable(m, x[1:p.nlocations] >= 0, Int)
+    JuMP.@variable(m, z[1:p.nregions, 1:max_amb] >= 0, Bin)
 
-    JuMP.@setObjective(m, Min, sum{(1-q)*(q^k)*demand[j]*z[j,k], j=J, k=K})
+    JuMP.@objective(m, Min, sum((1-q)*(q^k)*demand[j]*z[j,k] for j=J, k=K))
 
-    JuMP.@addConstraint(m, sum{x[i], i=I} <= p.nambulances)
+    JuMP.@constraint(m, sum(x[i] for i=I) <= p.nambulances)
     for j in J # coverage over all regions
-        JuMP.@addConstraint(m, sum{x[i], i in filter(i->p.coverage[j,i], I)} >= sum{z[j,k], k=1:K})
+        JuMP.@constraint(m, sum(x[i] for i in filter(i->p.coverage[j,i], I)) >= sum(z[j,k] for k=1:K))
     end
 
     DSMDeployment(m, x)

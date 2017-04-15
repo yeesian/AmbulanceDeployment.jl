@@ -1,10 +1,10 @@
 function request_for!(problem::DispatchProblem, location::Int, t::Int)
     @assert problem.deployment[location] > 0
-    if problem.available[location] == 0
+    if problem.available[location] == 0 # no ambulances available
         problem.wait_queue[location] += 1
         @assert length(problem.amb_queue[location]) >= 1
         delay = problem.amb_queue[location][1] - t
-    else
+    else # ambulance available
         problem.available[location] -= 1
         delay = 0
     end
@@ -14,7 +14,7 @@ end
 function returned_to!(problem::DispatchProblem, location::Int, t::Int)
     @assert problem.deployment[location] > 0
     @assert !isempty(problem.amb_queue[location])
-    shift!(problem.amb_queue[location])
+    shift!(problem.amb_queue[location]) # remove the first item from collection
     problem.available[location] += (problem.wait_queue[location] == 0)
     problem.wait_queue[location] -= (problem.wait_queue[location] > 0)
 end
@@ -32,14 +32,14 @@ end
 function simulate_events!(problem::DispatchProblem,
                           model::DispatchModel,
                           turnaround::Distributions.LogNormal,
-                          model_name::ASCIIString="model",
+                          model_name::String="model",
                           verbose::Bool=false; mini_verbose=false)
     
     amb_allocation = problem.deployment # for checking of invariance properties
     events = form_queue(problem.emergency_calls)
     ncalls = nrow(problem.emergency_calls)
-    dispatch_col = symbol("$(model_name)_dispatch")
-    delay_col = symbol("$(model_name)_delay")
+    dispatch_col = Symbol("$(model_name)_dispatch")
+    delay_col = Symbol("$(model_name)_delay")
     problem.emergency_calls[dispatch_col] = 0
     problem.emergency_calls[delay_col] = 1000.0 # Inf; should be filled with smaller values after
 
@@ -49,12 +49,12 @@ function simulate_events!(problem::DispatchProblem,
             i = ambulance_for(model, id, problem, verbose=mini_verbose)
             if i == 0
                 region = problem.emergency_calls[id, :neighborhood]
-                println(amb_allocation)
-                println(vec(problem.coverage[region,:]))
-                println(amb_allocation[vec(problem.coverage[region,:])])
-                println(problem.amb_queue)
+                verbose && println(amb_allocation)
+                verbose && println(vec(problem.coverage[region,:]))
+                verbose && println(amb_allocation[vec(problem.coverage[region,:])])
+                verbose && println(problem.amb_queue)
                 @assert sum(amb_allocation[vec(problem.coverage[region,:])]) == 0
-                println("       out-of-range: $((id,t,value))")
+                verbose && println("       out-of-range: $((id,t,value))")
             else
                 problem.emergency_calls[id, dispatch_col] = i
                 verbose && println("time $t: incoming emergency call from region $value")
@@ -63,16 +63,17 @@ function simulate_events!(problem::DispatchProblem,
                 update_ambulances!(model, i, -1)
                 delay = request_for!(problem, i, t) # queue wait time if busy
                 if delay < 0
-                    println(problem.amb_queue[i])
-                    println(t)
+                    verbose && println(problem.amb_queue[i])
+                    verbose && println(t)
                     @assert delay >= 0
                 end
-                delay += ceil(Int,60*problem.emergency_calls[id, i+2]) # include road travel time
+                travel_time = ceil(Int,60*problem.emergency_calls[id, Symbol("stn$(i)_min")]) # include road travel time
+                delay += travel_time
                 problem.emergency_calls[id, delay_col] = delay / 60 # express in terms of minutes
                 verbose && (delay  > 0) && println("time $t:   send from $(problem.amb_queue[i])")
                 verbose && (delay == 0) && println("time $t:   ambulance dispatched from $i")
 
-                t_end = t + delay + ceil(Int,60*rand(turnaround)) # time the ambualnce ends service (back at base)
+                t_end = t + travel_time + ceil(Int,60*rand(turnaround)) # time the ambualnce ends service (back at base)
                 push!(problem.amb_queue[i], t_end)
                 sort!(problem.amb_queue[i]) # may not be in order
                 enqueue!(events, (id+ncalls, t_end, i), t_end)
@@ -93,6 +94,7 @@ function simulate_events!(problem::DispatchProblem,
     end
     @assert sum(problem.wait_queue) == 0
     @assert all(problem.available .== amb_allocation)
+    # @assert all(problem.emergency_calls[dispatch_col] .> 0)
 end
 
 # function form_queue(emergency_calls::DataFrame)

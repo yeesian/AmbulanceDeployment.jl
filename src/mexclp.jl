@@ -2,7 +2,7 @@ type MEXCLPDeployment <: DeploymentModel
     m::JuMP.Model
     x::Vector{JuMP.Variable}
 end
-deployment(m::MEXCLPDeployment) = Int[round(Int,x) for x in JuMP.getValue(m.x)]
+deployment(m::MEXCLPDeployment) = Int[round(Int,x) for x in JuMP.getvalue(m.x)]
 
 function MEXCLPDeployment(p::DeploymentProblem,
                           q::Float64; # busy fraction
@@ -19,16 +19,17 @@ function MEXCLPDeployment(p::DeploymentProblem,
     K = 1:max_amb
 
     m = JuMP.Model(solver=solver)
-    JuMP.@defVar(m, x[1:p.nlocations] >= 0, Int)
-    JuMP.@defVar(m, z[1:p.nregions, 1:max_amb], Bin)
+    JuMP.@variable(m, x[1:p.nlocations] >= 0, Int)
+    JuMP.@variable(m, z[1:p.nregions, 1:max_amb], Bin)
 
-    JuMP.@setObjective(m, Max, sum{demand[j]*(1-q)*(q^k)*z[j,k], j in J, k in K})
+    JuMP.@objective(m, Max, sum(demand[j]*(1-q)*(q^k)*z[j,k] for j in J, k in K))
 
-    JuMP.@addConstraint(m, sum{x[i], i in I} <= p.nambulances)
+    JuMP.@constraint(m, sum(x[i] for i in I) <= p.nambulances)
 
     for j in J # coverage over all regions
-        JuMP.@addConstraint(m, sum{x[i], i in filter(i->p.coverage[j,i], I)} >= 1)
-        JuMP.@addConstraint(m, sum{x[i], i in filter(i->p.coverage[j,i], I)} >= sum{z[j,k], k in K})
+        JuMP.@constraint(m, sum(x[i] for i in filter(i->p.coverage[j,i], I)) >= 1)
+        JuMP.@constraint(m, sum(x[i] for i in filter(i->p.coverage[j,i], I)) >=
+                            sum(z[j,k] for k in K))
     end
 
     MEXCLPDeployment(m, x)

@@ -3,6 +3,7 @@ type LPDispatchGreedy <: DispatchModel
     candidates::Vector{Vector{Int}}
     location::Vector{JuMP.ConstraintRef}
     y::Array{JuMP.Variable,2}
+    drivetime::DataFrame
     wait_queue::Vector{Int} # number of people waiitng for ambulances
 end
 
@@ -11,6 +12,7 @@ type LPDispatchRandom <: DispatchModel
     candidates::Vector{Vector{Int}}
     location::Vector{JuMP.ConstraintRef}
     y::Array{JuMP.Variable,2}
+    drivetime::DataFrame
     wait_queue::Vector{Int} # number of people waiitng for ambulances
 end
 
@@ -20,27 +22,29 @@ type LPDispatchBacklog <: DispatchModel
     location::Vector{JuMP.ConstraintRef}
     y::Array{JuMP.Variable,2}
     yb::Array{JuMP.Variable,2}
+    drivetime::DataFrame
 end
 
 function LPDispatchGreedy(p::DeploymentProblem,
+                          drivetime::DataFrame,
                           available::Vector{Int},
                           solver=GurobiSolver(OutputFlag=0),
                           tol=params.δ)
     demand = vec(mean(p.demand[p.train,:],1))
     I = 1:p.nlocations ; J = 1:p.nregions
     m = JuMP.Model(solver=solver)
-    JuMP.@defVar(m, x[1:p.nlocations] >= 0)
-    JuMP.@defVar(m, y[1:p.nlocations,1:p.nregions] >= 0)
-    JuMP.@defVar(m, z[1:p.nregions] >= 0)
-    JuMP.@setObjective(m, Min, sum{z[j], j=J} + tol*sum{y[i,j], i=I, j=J})
+    JuMP.@variable(m, x[1:p.nlocations] >= 0)
+    JuMP.@variable(m, y[1:p.nlocations,1:p.nregions] >= 0)
+    JuMP.@variable(m, z[1:p.nregions] >= 0)
+    JuMP.@objective(m, Min, sum(z[j] for j=J) + tol*sum(y[i,j] for i=I, j=J))
     location = Array(JuMP.ConstraintRef, p.nlocations)
     for i in I # flow constraints at each station
-        JuMP.@defExpr(outflow, sum{y[i,j], j in filter(j->p.coverage[j,i], J)})
-        location[i] = JuMP.@addConstraint(m, outflow <= available[i])
+        JuMP.@expression(m, outflow, sum(y[i,j] for j in filter(j->p.coverage[j,i], J)))
+        location[i] = JuMP.@constraint(m, outflow <= available[i])
     end
     for j in J # shortfall from satisfying demand/calls
-        JuMP.@defExpr(inflow, sum{y[i,j], i in filter(i->p.coverage[j,i], I)})
-        JuMP.@addConstraint(m, z[j] >= demand[j] - inflow)
+        JuMP.@expression(m, inflow, sum(y[i,j] for i in filter(i->p.coverage[j,i], I)))
+        JuMP.@constraint(m, z[j] >= demand[j] - inflow)
     end
     candidates = Array(Vector{Int}, p.nregions)
     for region in 1:p.nregions
@@ -48,28 +52,29 @@ function LPDispatchGreedy(p::DeploymentProblem,
     end
     status = JuMP.solve(m)
     @assert status == :Optimal
-    LPDispatchGreedy(m, candidates, location, y, zeros(Int, p.nlocations))
+    LPDispatchGreedy(m, candidates, location, y, drivetime, zeros(Int, p.nlocations))
 end
 
 function LPDispatchRandom(p::DeploymentProblem,
+                          drivetime::DataFrame,
                           available::Vector{Int},
                           solver=GurobiSolver(OutputFlag=0),
                           tol=params.δ)
     demand = vec(mean(p.demand[p.train,:],1))
     I = 1:p.nlocations ; J = 1:p.nregions
     m = JuMP.Model(solver=solver)
-    JuMP.@defVar(m, x[1:p.nlocations] >= 0)
-    JuMP.@defVar(m, y[1:p.nlocations,1:p.nregions] >= 0)
-    JuMP.@defVar(m, z[1:p.nregions] >= 0)
-    JuMP.@setObjective(m, Min, sum{z[j], j=J} + tol*sum{y[i,j], i=I, j=J})
+    JuMP.@variable(m, x[1:p.nlocations] >= 0)
+    JuMP.@variable(m, y[1:p.nlocations,1:p.nregions] >= 0)
+    JuMP.@variable(m, z[1:p.nregions] >= 0)
+    JuMP.@objective(m, Min, sum(z[j] for j=J) + tol*sum(y[i,j] for i=I, j=J))
     location = Array(JuMP.ConstraintRef, p.nlocations)
     for i in I # flow constraints at each station
-        JuMP.@defExpr(outflow, sum{y[i,j], j in filter(j->p.coverage[j,i], J)})
-        location[i] = JuMP.@addConstraint(m, outflow <= available[i])
+        JuMP.@expression(m, outflow, sum(y[i,j] for j in filter(j->p.coverage[j,i], J)))
+        location[i] = JuMP.@constraint(m, outflow <= available[i])
     end
     for j in J # shortfall from satisfying demand/calls
-        JuMP.@defExpr(inflow, sum{y[i,j], i in filter(i->p.coverage[j,i], I)})
-        JuMP.@addConstraint(m, z[j] >= demand[j] - inflow)
+        JuMP.@expression(m, inflow, sum(y[i,j] for i in filter(i->p.coverage[j,i], I)))
+        JuMP.@constraint(m, z[j] >= demand[j] - inflow)
     end
     candidates = Array(Vector{Int}, p.nregions)
     for region in 1:p.nregions
@@ -77,29 +82,30 @@ function LPDispatchRandom(p::DeploymentProblem,
     end
     status = JuMP.solve(m)
     @assert status == :Optimal
-    LPDispatchRandom(m, candidates, location, y, zeros(Int, p.nlocations))
+    LPDispatchRandom(m, candidates, location, y, drivetime, zeros(Int, p.nlocations))
 end
 
 function LPDispatchBacklog(p::DeploymentProblem,
+                           drivetime::DataFrame,
                            available::Vector{Int},
                            solver=GurobiSolver(OutputFlag=0),
                            tol=params.δ)
     demand = vec(mean(p.demand[p.train,:],1))
     I = 1:p.nlocations ; J = 1:p.nregions
     m = JuMP.Model(solver=solver)
-    JuMP.@defVar(m, x[1:p.nlocations] >= 0)
-    JuMP.@defVar(m, y[1:p.nlocations,1:p.nregions] >= 0)
-    JuMP.@defVar(m, yb[1:p.nlocations,1:p.nregions] >= 0)
-    JuMP.@defVar(m, z[1:p.nregions] >= 0)
-    JuMP.@setObjective(m, Min, sum{z[j], j=J} + tol*sum{y[i,j]+yb[i,j], i=I, j=J})
+    JuMP.@variable(m, x[1:p.nlocations] >= 0)
+    JuMP.@variable(m, y[1:p.nlocations,1:p.nregions] >= 0)
+    JuMP.@variable(m, yb[1:p.nlocations,1:p.nregions] >= 0)
+    JuMP.@variable(m, z[1:p.nregions] >= 0)
+    JuMP.@objective(m, Min, sum(z[j] for j=J) + tol*sum(y[i,j]+yb[i,j] for i=I, j=J))
     location = Array(JuMP.ConstraintRef, p.nlocations)
     for i in I # flow constraints at each station
-        JuMP.@defExpr(outflow, sum{y[i,j]-yb[i,j], j in filter(j->p.coverage[j,i], J)})
-        location[i] = JuMP.@addConstraint(m, outflow <= available[i])
+        JuMP.@expression(m, outflow, sum(y[i,j]-yb[i,j] for j in filter(j->p.coverage[j,i], J)))
+        location[i] = JuMP.@constraint(m, outflow <= available[i])
     end
     for j in J # shortfall from satisfying demand/calls
-        JuMP.@defExpr(inflow, sum{y[i,j]-yb[i,j], i in filter(i->p.coverage[j,i], I)})
-        JuMP.@addConstraint(m, z[j] >= demand[j] - inflow)
+        JuMP.@expression(m, inflow, sum(y[i,j]-yb[i,j] for i in filter(i->p.coverage[j,i], I)))
+        JuMP.@constraint(m, z[j] >= demand[j] - inflow)
     end
     candidates = Array(Vector{Int}, p.nregions)
     for region in 1:p.nregions
@@ -107,7 +113,7 @@ function LPDispatchBacklog(p::DeploymentProblem,
     end
     status = JuMP.solve(m)
     @assert status == :Optimal
-    LPDispatchBacklog(m, candidates, location, y, yb)
+    LPDispatchBacklog(m, candidates, location, y, yb, drivetime)
 end
 
 function update_ambulances!(model::LPDispatchGreedy, i::Int, delta::Int)
@@ -165,16 +171,22 @@ function update_ambulances!(model::LPDispatchBacklog, i::Int, delta::Int)
     end
 end
 
-function available_for(model::LPDispatchGreedy, j::Int, problem::DispatchProblem)
+function available_for(model::LPDispatchGreedy, id::Int, problem::DispatchProblem; β=100, verbose=false)
+    j = problem.emergency_calls[id, :neighborhood]
+    verbose && println("        LPGreedy: emergency call from $j")
     # when an emergency call arrives from region j
     candidates = model.candidates[j]
+    verbose && println("        LPGreedy: checking candidates $candidates")
+    verbose && println("                        availability: $(problem.available[candidates])")
     yvalues = JuMP.getValue(model.y[candidates,j])
     for (yi,xi) in enumerate(candidates)
         if problem.available[xi] > 0
             yvalues[yi] = yvalues[yi] / problem.available[xi]
         end
     end
-    yindices = sortperm(yvalues) # order the candidates in decreasing "desirability"
+    # drivetime = Float64[model.drivetime[id,i] for i in candidates]
+    #yindices = sortperm(drivetime - β*yvalues) # order the candidates in decreasing "desirability"
+    yindices = sortperm(-yvalues) # order the candidates in decreasing "desirability"
     for i in yindices
         if problem.available[candidates[i]] > 0 # send the most "desirable" one
             return candidates[i]
@@ -184,7 +196,8 @@ function available_for(model::LPDispatchGreedy, j::Int, problem::DispatchProblem
     return 0
 end
 
-function available_for(model::LPDispatchRandom, j::Int, problem::DispatchProblem)
+function available_for(model::LPDispatchRandom, id::Int, problem::DispatchProblem)
+    j = problem.emergency_calls[id, :neighborhood]
     candidates = model.candidates[j]
     yvalues = JuMP.getValue(model.y[candidates,j])
     if sum(yvalues) < 1e-6 # if the differences are too small
@@ -205,7 +218,8 @@ function available_for(model::LPDispatchRandom, j::Int, problem::DispatchProblem
     end
 end
 
-function available_for(model::LPDispatchBacklog, j::Int, problem::DispatchProblem)
+function available_for(model::LPDispatchBacklog, id::Int, problem::DispatchProblem)
+    j = problem.emergency_calls[id, :neighborhood]
     # when an emergency call arrives from region j
     candidates = model.candidates[j]
     fwd_values = JuMP.getValue(model.y[model.candidates[j],j])
@@ -285,20 +299,20 @@ function StochasticDispatch(p::DeploymentProblem,
     T = 1:nperiods
 
     m = JuMP.Model(solver=solver)
-    JuMP.@defVar(m, y[1:p.nlocations,1:p.nregions,1:nperiods] >= 0, Int)
-    JuMP.@defVar(m, z[1:p.nregions,1:nperiods] >= 0, Int)
+    JuMP.@variable(m, y[1:p.nlocations,1:p.nregions,1:nperiods] >= 0, Int)
+    JuMP.@variable(m, z[1:p.nregions,1:nperiods] >= 0, Int)
 
-    JuMP.@setObjective(m, Min, sum{z[j,t], j=J, t=T} + tol*sum{y[i,j,t], i=I, j=J, t=T})
+    JuMP.@objective(m, Min, sum(z[j,t] for j=J, t=T) + tol*sum(y[i,j,t] for i=I, j=J, t=T))
 
     location = Array(JuMP.ConstraintRef, p.nlocations)
     for t in T
         for i in I # flow constraints at each station
-            JuMP.@defExpr(outflow, sum{y[i,j,t], j in filter(j->p.coverage[j,i], J)})
-            location[i] = JuMP.@addConstraint(m, outflow <= available[i])
+            JuMP.@expression(m, outflow, sum(y[i,j,t] for j in filter(j->p.coverage[j,i], J)))
+            location[i] = JuMP.@constraint(m, outflow <= available[i])
         end
         for j in J # shortfall from satisfying demand/calls
-            JuMP.@defExpr(inflow, sum{y[i,j,t], i in filter(i->p.coverage[j,i], I)})
-            JuMP.@addConstraint(m, z[j,t] >= demand[t,j] - inflow)
+            JuMP.@expression(m, inflow, sum(y[i,j,t] for i in filter(i->p.coverage[j,i], I)))
+            JuMP.@constraint(m, z[j,t] >= demand[t,j] - inflow)
         end
     end
 
@@ -400,18 +414,18 @@ function MALPDispatch(p::DeploymentProblem,
     b = ceil(Int, log(1-α)/log(q))
 
     m = JuMP.Model(solver=solver)
-    JuMP.@defVar(m, x[1:p.nlocations] >= 0, Int)
-    JuMP.@defVar(m, z[1:p.nregions, 1:b], Bin)
+    JuMP.@variable(m, x[1:p.nlocations] >= 0, Int)
+    JuMP.@variable(m, z[1:p.nregions, 1:b], Bin)
 
-    JuMP.@setObjective(m, Max, sum{demand[j]*z[j,b], j in J})
+    JuMP.@objective(m, Max, sum(demand[j]*z[j,b] for j in J))
 
-    JuMP.@addConstraint(m, sum{x[i], i in I} <= p.nambulances)
+    JuMP.@constraint(m, sum(x[i] for i in I) <= p.nambulances)
     region = Array(JuMP.ConstraintRef, p.nregions)
     for j in J # coverage over all regions
         region_j = sum([available[i] for i in filter(i->p.coverage[j,i], I)])
-        region[j] = JuMP.@addConstraint(m, sum{z[j,k], k in 1:b} <= region_j)
+        region[j] = JuMP.@constraint(m, sum(z[j,k] for k in 1:b) <= region_j)
         for k in 2:b
-            JuMP.@addConstraint(m, z[j,k] <= z[j,k-1])
+            JuMP.@constraint(m, z[j,k] <= z[j,k-1])
         end
     end
 

@@ -17,17 +17,17 @@ function MALPDeployment(p::DeploymentProblem,
     b = ceil(Int, log(1-α)/log(q))
 
     m = JuMP.Model(solver=solver)
-    JuMP.@defVar(m, x[1:p.nlocations] >= 0, Int)
-    JuMP.@defVar(m, z[1:p.nregions, 1:b], Bin)
+    JuMP.@variable(m, x[1:p.nlocations] >= 0, Int)
+    JuMP.@variable(m, z[1:p.nregions, 1:b], Bin)
 
-    JuMP.@setObjective(m, Max, sum{demand[j]*z[j,b], j in J})
+    JuMP.@objective(m, Max, sum(demand[j]*z[j,b], j in J))
 
-    JuMP.@addConstraint(m, sum{x[i], i in I} <= p.nambulances)
+    JuMP.@constraint(m, sum(x[i] for i in I) <= p.nambulances)
     for j in J # coverage over all regions
-        JuMP.@addConstraint(m, sum{x[i], i in filter(i->p.coverage[j,i], I)} >= 1)
-        JuMP.@addConstraint(m, sum{x[i], i in filter(i->p.coverage[j,i], I)} >= sum{z[j,k], k in 1:b})
+        JuMP.@constraint(m, sum(x[i] for i in filter(i->p.coverage[j,i], I)) >= 1)
+        JuMP.@constraint(m, sum(x[i] for i in filter(i->p.coverage[j,i], I)) >= sum(z[j,k] for k in 1:b))
         for k in 2:b
-            JuMP.@addConstraint(m, z[j,k] <= z[j,k-1])
+            JuMP.@constraint(m, z[j,k] <= z[j,k-1])
         end
     end
 

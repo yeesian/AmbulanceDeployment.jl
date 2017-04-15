@@ -30,6 +30,9 @@ type RobustDeployment <: DeploymentModel
     upperbounds::Vector{Float64}
     lowerbounds::Vector{Float64}
     deployment::Vector{Vector{Int}}
+
+    upptiming::Vector{Float64}
+    lowtiming::Vector{Float64}
 end
 deployment(m::RobustDeployment) = m.deployment[end]
 
@@ -43,7 +46,7 @@ function Gamma(p::DeploymentProblem; α=params.α)
 end
 
 function Qrobust(problem::DeploymentProblem; α=params.α, verbose=false,
-    solver=GurobiSolver(OutputFlag=0)) #, MIPGapAbs=0.9)) #, TimeLimit=30))
+    solver=GurobiSolver(OutputFlag=0, MIPGapAbs=0.9)) #, TimeLimit=30))
     if verbose
         solver=GurobiSolver(OutputFlag=1) #, MIPGapAbs=0.9)
     end
@@ -53,39 +56,39 @@ function Qrobust(problem::DeploymentProblem; α=params.α, verbose=false,
     J = 1:problem.nregions
 
     m = JuMP.Model(solver=solver)
-    JuMP.@defVar(m, d[1:problem.nregions]>=0, Int)
-    JuMP.@defVar(m, p[1:problem.nregions], Bin)
-    JuMP.@defVar(m, q[1:problem.nlocations], Bin)
+    JuMP.@variable(m, d[1:problem.nregions]>=0, Int)
+    JuMP.@variable(m, p[1:problem.nregions], Bin)
+    JuMP.@variable(m, q[1:problem.nlocations], Bin)
 
     for i in I, j in J
-        problem.coverage[j, i] && JuMP.@addConstraint(m, p[j] <= q[i])
+        problem.coverage[j, i] && JuMP.@constraint(m, p[j] <= q[i])
     end
 
     # Uncertainty
     for j in J
-        JuMP.@addConstraint(m, d[j] <= γ._single[j]*p[j])
+        JuMP.@constraint(m, d[j] <= γ._single[j]*p[j])
         adjacent_regions = filter(k->problem.adjacency[k,j],J)
-        JuMP.@addConstraint(m, sum{d[k], k in adjacent_regions} <= γ._local[j])
+        JuMP.@constraint(m, sum(d[k] for k in adjacent_regions) <= γ._local[j])
     end
     for i in I
         covered_regions = filter(j->problem.coverage[j,i],J)
-        JuMP.@addConstraint(m, sum{d[j], j in covered_regions} <= γ._regional[i])
+        JuMP.@constraint(m, sum(d[j] for j in covered_regions) <= γ._regional[i])
     end
-    JuMP.@addConstraint(m, sum{d[j], j in J} <= γ._global)
+    JuMP.@constraint(m, sum(d[j] for j in J) <= γ._global)
 
     Qrobust(m, I, J, d, q, γ)
 end
 
 function evaluate{T <: Real}(Q::Qrobust, x::Vector{T})
-    JuMP.@setObjective(Q.m, Max, sum{Q.d[j], j in Q.J} - sum{x[i]*Q.q[i], i in Q.I})
+    JuMP.@objective(Q.m, Max, sum(Q.d[j] for j in Q.J) - sum(x[i]*Q.q[i] for i in Q.I))
     status = JuMP.solve(Q.m)
-    JuMP.getObjectiveValue(Q.m), Int[round(Int,d) for d in JuMP.getValue(Q.d)]
+    JuMP.getobjectivevalue(Q.m), Int[round(Int,d) for d in JuMP.getvalue(Q.d)]
 end
 
 function evaluate_objvalue{T <: Real}(Q::Qrobust, x::Vector{T})
-    JuMP.@setObjective(Q.m, Max, sum{Q.d[j], j in Q.J} - sum{x[i]*Q.q[i], i in Q.I})
+    JuMP.@objective(Q.m, Max, sum(Q.d[j] for j in Q.J) - sum(x[i]*Q.q[i] for i in Q.I))
     status = JuMP.solve(Q.m)
-    JuMP.getObjectiveValue(Q.m)
+    JuMP.getobjectivevalue(Q.m)
 end
 
 function RobustDeployment(p::DeploymentProblem; α=params.α, eps=params.ε, tol=params.δ,
@@ -96,21 +99,24 @@ function RobustDeployment(p::DeploymentProblem; α=params.α, eps=params.ε, tol
     I = 1:p.nlocations
     J = 1:p.nregions
 
+    warmstart = naive_solution(p)
+
     m = JuMP.Model(solver=solver)
-    JuMP.@defVar(m, x[1:p.nlocations] >= 0, Int)
-    JuMP.@defVar(m, η >= 0)
+    JuMP.@variable(m, x[i=1:p.nlocations] >= 0, Int, start=warmstart[i])
+    JuMP.@variable(m, η >= 0)
     y = Vector{Matrix{JuMP.Variable}}()
     z = Vector{JuMP.Variable}()
 
     # Initial Restricted Master Problem
-    JuMP.@setObjective(m, Min, η)
-    JuMP.@addConstraint(m, sum{x[i], i=I} <= p.nambulances)
+    JuMP.@objective(m, Min, η)
+    JuMP.@constraint(m, sum(x[i] for i=I) <= p.nambulances)
     for j in J # coverage over all regions
-        JuMP.@addConstraint(m, sum{x[i], i in filter(i->p.coverage[j,i], I)} >= 1)
+        JuMP.@constraint(m, sum(x[i] for i in filter(i->p.coverage[j,i], I)) >= 1)
     end
 
     RobustDeployment(m, Qrobust(p, α=α, verbose=verbose), I, J, x, y, z, η,
-                     Vector{Vector{Int}}(), Vector{Float64}(), Vector{Float64}(), Vector{Int}[naive_solution(p)])
+                     Vector{Vector{Int}}(), Vector{Float64}(), Vector{Float64}(),
+                     Vector{Int}[warmstart], Vector{Float64}(), Vector{Float64}())
 end
 
 function add_scenario{T <: Real}(model::RobustDeployment, p::DeploymentProblem, scenario::Vector{T}; tol=params.δ)
@@ -118,23 +124,23 @@ function add_scenario{T <: Real}(model::RobustDeployment, p::DeploymentProblem, 
     push!(model.y, Array(JuMP.Variable, (p.nlocations,p.nregions)))
     l = length(model.y)
     for i in model.I, j in model.J
-        model.y[l][i,j] = JuMP.Variable(model.m, 0, p.nambulances, :Int, UTF8String("y[$i,$j,$l]"))
+        model.y[l][i,j] = JuMP.Variable(model.m, 0, p.nambulances, :Int, String("y[$i,$j,$l]"))
     end
     push!(model.z, Array(JuMP.Variable, p.nregions))
     for j in model.J
-        model.z[l][j] = JuMP.Variable(model.m, 0, Inf, :Int, UTF8String("z[$j,$l]"))
+        model.z[l][j] = JuMP.Variable(model.m, 0, Inf, :Int, String("z[$j,$l]"))
     end
 
     # (1) η >= 1ᵀ(dˡ + Bᴶyˡ)^+
-    JuMP.@addConstraint(model.m, model.η >= sum{model.z[l][j], j=model.J} + tol*sum{model.y[l][i,j], i=model.I, j=model.J})
+    JuMP.@constraint(model.m, model.η >= sum(model.z[l][j] for j=model.J) + tol*sum(model.y[l][i,j] for i=model.I, j=model.J))
     for i in model.I # flow constraints at each station
-        JuMP.@defExpr(outflow, sum{model.y[l][i,j], j in filter(j->p.coverage[j,i], model.J)})
-        JuMP.@addConstraint(model.m, model.x[i] >= outflow)
+        JuMP.@expression(m, outflow, sum(model.y[l][i,j] for j in filter(j->p.coverage[j,i], model.J)))
+        JuMP.@constraint(model.m, model.x[i] >= outflow)
     end
     # (2) yˡ ∈ Y(x)
     for j in model.J # shortfall from satisfying demand/calls
-        JuMP.@defExpr(inflow, sum{model.y[l][i,j], i in filter(i->p.coverage[j,i], model.I)})
-        JuMP.@addConstraint(model.m, model.z[l][j] >= scenario[j] - inflow)
+        JuMP.@expression(m, inflow, sum(model.y[l][i,j] for i in filter(i->p.coverage[j,i], model.I)))
+        JuMP.@constraint(model.m, model.z[l][j] >= scenario[j] - inflow)
     end
 end
 
@@ -148,16 +154,21 @@ function solve(model::RobustDeployment, p::DeploymentProblem; verbose=false, max
     for k in 1:maxiter
         verbose && println("iteration $k: LB $LB, UB $UB")
         abs(UB - LB) < eps && break
-        verbose && println("  solving Q with $(model.deployment)")
+        verbose && println("  solving Q with $(model.deployment[end])")
 
         add_scenario(model, p, scenario)
+        tic()
         status = JuMP.solve(model.m)
+        push!(model.lowtiming, toq())
         @assert status == :Optimal
 
-        LB = JuMP.getObjectiveValue(model.m)
+        LB = JuMP.getobjectivevalue(model.m)
 
-        push!(model.deployment, [round(Int,x) for x in JuMP.getValue(model.x)])
+        push!(model.deployment, [round(Int,x) for x in JuMP.getvalue(model.x)])
+
+        tic()
         shortfall, scenario = evaluate(model.Q, model.deployment[end])
+        push!(model.upptiming, toq())
         UB = min(UB, shortfall)
 
         # for tracking convergence later

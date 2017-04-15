@@ -32,20 +32,20 @@ function evaluate{T1, T2 <: Real}(x::Vector{T1}, scenario::Vector{T2}, p::Deploy
     J = 1:p.nregions
 
     m = JuMP.Model(solver=solver)
-    JuMP.@defVar(m, y[1:p.nlocations,1:p.nregions] >= 0, Int)
-    JuMP.@defVar(m, z[1:p.nregions] >= 0, Int)
+    JuMP.@variable(m, y[1:p.nlocations,1:p.nregions] >= 0, Int)
+    JuMP.@variable(m, z[1:p.nregions] >= 0, Int)
 
-    JuMP.@setObjective(m, Min, sum{z[j], j in J})
+    JuMP.@objective(m, Min, sum(z[j] for j in J))
 
     # flow constraints at each station
     for i in I
-        JuMP.@defExpr(outflow, sum{y[i,j], j in filter(j->p.coverage[j,i], J)})
-        JuMP.@addConstraint(m, x[i] >= outflow)
+        JuMP.@expression(m, outflow, sum(y[i,j] for j in filter(j->p.coverage[j,i], J)))
+        JuMP.@constraint(m, x[i] >= outflow)
     end
     # shortfall from satisfying demand/calls
     for j in J
-        JuMP.@defExpr(inflow, sum{y[i,j], i in filter(i->p.coverage[j,i], I)})
-        JuMP.@addConstraint(m, z[j] >= scenario[j] - inflow)
+        JuMP.@expression(m, inflow, sum(y[i,j] for i in filter(i->p.coverage[j,i], I)))
+        JuMP.@constraint(m, z[j] >= scenario[j] - inflow)
     end
     status = JuMP.solve(m)
     @assert status == :Optimal

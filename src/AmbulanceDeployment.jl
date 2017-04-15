@@ -65,14 +65,14 @@ module AmbulanceDeployment
 
     type DispatchProblem
         emergency_calls::DataFrame
-        coverage::BitArray{2} # (nbhd x stns)
+        coverage::Matrix{Bool} # (nbhd x stns)
         amb_queue::Vector{Vector{Int}} # return times of ambulances 
         wait_queue::Vector{Int} # number of people waiitng for ambulances
         available::Vector{Int}
         deployment::Vector{Int}
         
-        DispatchProblem(emergency_data::DataFrame,
-                        coverage::BitArray{2}) =
+        DispatchProblem{BM}(emergency_data::DataFrame,
+                            coverage::BM) =
             new(emergency_data, coverage)
     end
 
@@ -90,10 +90,13 @@ module AmbulanceDeployment
     function ambulance_for(model::DispatchModel,
                            id::Int,
                            problem::DispatchProblem; verbose=false)
-        region = problem.emergency_calls[id, :neighborhood]
-        i = available_for(model, region, problem)
+        #region = problem.emergency_calls[id, :neighborhood]
+        #i = available_for(model, region, problem)
+        i = available_for(model, id, problem, verbose=verbose)
+        verbose && println("dispatching $i")
         if i == 0
-            return waiting_for(region, problem)
+            j = problem.emergency_calls[id, :neighborhood]
+            return waiting_for(j, problem)
         else
             update_ambulances!(model, i, -1)
             return i
@@ -138,7 +141,6 @@ module AmbulanceDeployment
     include("evaluate.jl")
     include("plot.jl")
     include("dispatch.jl")
-    include("simulate.jl")
 
     function ambulance_for(model::ClosestDispatch,
                            id::Int,
@@ -155,4 +157,6 @@ module AmbulanceDeployment
             return i
         end
     end
+
+    include("simulate.jl")
 end
