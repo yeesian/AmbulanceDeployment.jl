@@ -20,10 +20,12 @@ function returned_to!(problem::DispatchProblem, location::Int, t::Int)
 end
 
 function form_queue(emergency_calls::DataFrame)
-    pq = pq = PriorityQueue{Tuple{Int,Int,Int},Int,Base.Order.ForwardOrdering}()
+    pq = PriorityQueue{Tuple{Symbol,Int,Int,Int},Int,Base.Order.ForwardOrdering}()
     for i in 1:nrow(emergency_calls)
-        enqueue!(pq, (i, emergency_calls[i, :arrival_seconds],
-                         emergency_calls[i, :neighborhood]),
+        enqueue!(pq, (:call,
+                      i,
+                      emergency_calls[i, :arrival_seconds],
+                      emergency_calls[i, :neighborhood]),
                  emergency_calls[i, :arrival_seconds])
     end
     pq
@@ -44,8 +46,8 @@ function simulate_events!(problem::DispatchProblem,
     problem.emergency_calls[delay_col] = 1000.0 # Inf; should be filled with smaller values after
 
     while !isempty(events)
-        (id, t, value) = dequeue!(events)
-        if id <= ncalls # event == :call
+        (event, id, t, value) = dequeue!(events)
+        if event == :call
             i = ambulance_for(model, id, problem, verbose=mini_verbose)
             if i == 0
                 region = problem.emergency_calls[id, :neighborhood]
@@ -76,9 +78,10 @@ function simulate_events!(problem::DispatchProblem,
                 t_end = t + travel_time + ceil(Int,60*rand(turnaround)) # time the ambualnce ends service (back at base)
                 push!(problem.amb_queue[i], t_end)
                 sort!(problem.amb_queue[i]) # may not be in order
-                enqueue!(events, (id+ncalls, t_end, i), t_end)
+                enqueue!(events, (:done, id, t_end, i), t_end)
             end
-        else # event == :done
+        else
+            @assert event == :done
             verbose && println("time $t: 1 ambulance returned to location $value")
             returned_to!(problem, value, t)
             update_ambulances!(model, value, 1)
