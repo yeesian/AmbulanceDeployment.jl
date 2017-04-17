@@ -66,8 +66,7 @@ module AmbulanceDeployment
     type DispatchProblem
         emergency_calls::DataFrame
         coverage::Matrix{Bool} # (nbhd x stns)
-        amb_queue::Vector{Vector{Int}} # return times of ambulances 
-        wait_queue::Vector{Int} # number of people waiitng for ambulances
+        wait_queue::Vector{Vector{Int}} # length nbhd
         available::Vector{Int}
         deployment::Vector{Int}
         
@@ -78,8 +77,7 @@ module AmbulanceDeployment
 
     function initialize!(problem::DispatchProblem,
                          deployment::Vector{Int})
-        problem.amb_queue = [Vector{Int}() for i=1:length(deployment)]
-        problem.wait_queue = zeros(Int, length(deployment))
+        problem.wait_queue = [Int[] for i in 1:size(problem.coverage,1)]
         problem.available = copy(deployment)
         problem.deployment = deepcopy(deployment)
         problem
@@ -111,7 +109,7 @@ module AmbulanceDeployment
             if problem.coverage[j,i]
                 @assert problem.available[i] == 0
                 if problem.deployment[i] > 0
-                   @assert !isempty(problem.amb_queue[i])
+                    @assert !isempty(problem.amb_queue[i])
                     if problem.amb_queue[i][1] < earliest_time
                         earliest_location = i
                         earliest_time = problem.amb_queue[i][1]
