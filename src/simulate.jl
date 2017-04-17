@@ -69,7 +69,8 @@ function simulate_events!(problem::DispatchProblem,
         elseif event == :convey
             h = let mintime = Inf, minindex = 0
                 for i in 1:nrow(problem.hospitals)
-                    if problem.emergency_calls[id, Symbol("hosp$(i)_min")] < mintime
+                    traveltime = problem.emergency_calls[id, Symbol("hosp$(i)_min")]
+                    if !isna(traveltime) && traveltime < mintime
                         minindex = i
                         mintime = problem.emergency_calls[id, Symbol("hosp$(i)_min")]
                     end
