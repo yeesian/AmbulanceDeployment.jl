@@ -93,7 +93,7 @@ const stn_names = [Symbol("stn$(i)_min") for i in 1:size(p.coverage,2)];
 
         for name in model_names[1:2]
             print("$name: ")
-            for namb in 10:5:50
+            for namb in 45:5:50 # 10:5:20 #50
                 print("$namb ")
                 x = amb_deployment[name][namb]
                 p.nambulances = namb
