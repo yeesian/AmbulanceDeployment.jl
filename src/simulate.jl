@@ -39,8 +39,10 @@ function simulate_events!(problem::DispatchProblem,
     ncalls = nrow(problem.emergency_calls)
     dispatch_col = Symbol("$(model_name)_dispatch")
     delay_col = Symbol("$(model_name)_delay")
+    hospital_col = Symbol("$(model_name)_hospital")
     problem.emergency_calls[dispatch_col] = 0
     problem.emergency_calls[delay_col] = 1000.0 # Inf; should be filled with smaller values after
+    problem.emergency_calls[hospital_col] = 0
 
     while !isempty(events)
         (event, id, t, value) = dequeue!(events)
@@ -61,8 +63,23 @@ function simulate_events!(problem::DispatchProblem,
                 push!(problem.wait_queue[value], id) # queue the emergency call
             end
         elseif event == :arrive
-            t_end = t + ceil(Int,45*rand(turnaround)) # time the ambulance ends service (back at base)
-            @assert t_end > 0
+            scene_time = ceil(Int,15*rand(turnaround)) # time the ambulance ends service (back at base)
+            @assert scene_time > 0
+            enqueue!(events, (:convey, id, t + scene_time, value), t + scene_time)
+        elseif event == :convey
+            h = let mintime = Inf, minindex = 0
+                for i in 1:nrow(problem.hospitals)
+                    if problem.emergency_calls[id, Symbol("hosp$(i)_min")] < mintime
+                        minindex = i
+                        mintime = problem.emergency_calls[id, Symbol("hosp$(i)_min")]
+                    end
+                end
+                minindex
+            end
+            problem.emergency_calls[id, hospital_col] = h
+            conveytime = 15 + ceil(Int, 60*problem.emergency_calls[id, Symbol("hosp$(h)_min")])
+            returntime = ceil(Int,60*problem.hospitals[h, Symbol("stn$(value)_min")])
+            t_end = t + conveytime + returntime
             enqueue!(events, (:done, id, t_end, value), t_end)
         else
             @assert event == :done

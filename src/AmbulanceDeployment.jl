@@ -65,14 +65,16 @@ module AmbulanceDeployment
 
     type DispatchProblem
         emergency_calls::DataFrame
+        hospitals::DataFrame
         coverage::Matrix{Bool} # (nbhd x stns)
         wait_queue::Vector{Vector{Int}} # length nbhd
         available::Vector{Int}
         deployment::Vector{Int}
         
         DispatchProblem{BM}(emergency_data::DataFrame,
+                            hospitals::DataFrame,
                             coverage::BM) =
-            new(emergency_data, coverage)
+            new(emergency_data, hospitals, coverage)
     end
 
     function initialize!(problem::DispatchProblem,

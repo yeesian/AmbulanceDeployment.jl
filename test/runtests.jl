@@ -5,9 +5,12 @@ hourly_calls = DataFrames.readtable("data/processed/2-weekday_calls.csv")
 adjacent_nbhd = DataFrames.readtable("data/processed/2-adjacent_nbhd.csv")
 coverage = JLD.load("data/processed/3-coverage.jld", "stn_coverage")
 incidents = DataFrames.readtable("data/processed/3-incidents_drivetime.csv");
+hospitals = readtable("data/processed/3-hospitals.csv");
+
 
 regions = Int[parse(Int,string(x)[2:end]) for x in names(hourly_calls[5:end])]
 locations = collect(1:size(coverage,2))
+hosptals = 1:nrow(hospitals)
 adjacent = convert(Array, adjacent_nbhd[2:end])[regions,regions] .> 0.5
 demand = convert(Array,hourly_calls[:,5:end]);
 
@@ -23,7 +26,8 @@ regions2index = Dict{Int,Int}(regions[i]=>i for i in 1:length(regions))
 incidents[:neighborhood] = [regions2index[x] for x in incidents[:neighborhood]];
 
 calls = incidents[:,[[:hour,:dow,:month,:year,:neighborhood,:interarrival_seconds];
-                     Symbol[Symbol("stn$(i)_min") for i in locations]]]
+                     Symbol[Symbol("stn$(i)_min") for i in locations];
+                     Symbol[Symbol("hosp$(i)_min") for i in hosptals]]]
 
 # We focus on emergency calls during the "peak period" (8AM - 8PM),
 # with the emergency calls from the first 3 month as our training set,
@@ -86,7 +90,7 @@ const stn_names = [Symbol("stn$(i)_min") for i in 1:size(p.coverage,2)];
     p = DeploymentProblem(30, length(locations), length(regions), demand, indices[train_filter],
                                   indices[test_filter], coverage[regions,:], Array{Bool,2}(adjacent))
     for turnaround in (turnard,)
-        problem = DispatchProblem(calls[inc_test_indices,:], p.coverage)
+        problem = DispatchProblem(calls[inc_test_indices,:], hospitals, p.coverage)
         problem.emergency_calls[:arrival_seconds] = 0
         arrival_sec = cumsum(problem.emergency_calls[:interarrival_seconds])
         problem.emergency_calls[:arrival_seconds] = arrival_sec;
