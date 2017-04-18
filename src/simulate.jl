@@ -121,7 +121,7 @@ function simulate_events!(problem::DispatchProblem,
                 let id = shift!(wait_queue[minindex])
                     calls[id, dispatch_col] = stn
                     travel_time = ceil(Int,60*calls[id, Symbol("stn$(stn)_min")])
-                    @assert t - mintime > 0 && travel_time > 0 && t > 0
+                    @assert t - mintime >= 0 && travel_time > 0 && t > 0
                     total_delay = (t - mintime) + travel_time
                     calls[id, delay_col] = total_delay / 60 # minutes
                     enqueue!(events, (:arrive, id, t + total_delay, value), t + total_delay)
