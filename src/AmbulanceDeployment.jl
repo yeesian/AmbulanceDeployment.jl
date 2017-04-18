@@ -158,5 +158,6 @@ module AmbulanceDeployment
         end
     end
 
+    include("redeploy.jl")
     include("simulate.jl")
 end

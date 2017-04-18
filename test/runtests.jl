@@ -104,9 +104,10 @@ const stn_names = [Symbol("stn$(i)_min") for i in 1:size(p.coverage,2)];
 
                 initialize!(problem, x)
                 dispatch = ClosestDispatch(p, problem.emergency_calls[:, stn_names], x)
+                redeploy = AmbulanceDeployment.NoRedeployModel(p, x)
 
                 srand(1234) # reset seed
-                simulate_events!(problem, dispatch, turnaround, "$(name)_$(namb)", false)
+                simulate_events!(problem, dispatch, redeploy, turnaround, "$(name)_$(namb)", false)
             end
             println()
         end
