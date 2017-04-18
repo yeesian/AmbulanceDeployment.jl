@@ -40,7 +40,8 @@ module AmbulanceDeployment
            simulate_events!,
            initialize!
 
-    type DeploymentProblem{BM <: AbstractMatrix{Bool}}
+    type DeploymentProblem{ IM <: AbstractMatrix{Int},
+                            BM <: AbstractMatrix{Bool}}
         nambulances::Int
         nlocations::Int
         nregions::Int
