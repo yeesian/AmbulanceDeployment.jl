@@ -62,7 +62,7 @@ module AmbulanceDeployment
         x
     end
 
-    type DispatchProblem{BM <: AbstractMatrix{Bool}}
+    type DispatchProblem
         emergency_calls::DataFrame
         hospitals::DataFrame
         coverage::Matrix{Bool} # (nbhd x stns)
