@@ -1,18 +1,7 @@
-function request_for!(problem::DispatchProblem, location::Int, t::Int)
-    @assert problem.deployment[location] > 0
-    if problem.available[location] == 0 # no ambulances available
-        problem.wait_queue[location] += 1
-        @assert length(problem.amb_queue[location]) >= 1
-        delay = problem.amb_queue[location][1] - t
-    else # ambulance available
-        problem.available[location] -= 1
-        delay = 0
-    end
-    delay
-end
 
 function returned_to!(problem::DispatchProblem, location::Int, t::Int)
     @assert problem.deployment[location] > 0
+    @assert problem.available[location] >= 0
     problem.available[location] += 1
 end
 
@@ -41,23 +30,25 @@ function simulate_events!(problem::DispatchProblem,
     delay_col = Symbol("$(model_name)_delay")
     hospital_col = Symbol("$(model_name)_hospital")
     problem.emergency_calls[dispatch_col] = 0
-    problem.emergency_calls[delay_col] = 1000.0 # Inf; should be filled with smaller values after
+    problem.emergency_calls[delay_col] = typemax(Float64) # Inf
     problem.emergency_calls[hospital_col] = 0
 
     while !isempty(events)
         (event, id, t, value) = dequeue!(events)
-        @assert t > 0 "$((event, id, t, value))"
         if event == :call
             if sum(problem.deployment[problem.coverage[value,:]]) == 0
                 verbose && println("no ambulance reachable for call at $value")
             elseif sum(problem.available[problem.coverage[value,:]]) > 0
                 i = ambulance_for(model, id, problem, verbose=mini_verbose) # assume valid i
+                
                 problem.emergency_calls[id, dispatch_col] = i
-                update_ambulances!(model, i, -1)
                 problem.available[i] -= 1
+                update_ambulances!(model, i, -1)
+                
                 travel_time = ceil(Int,60*problem.emergency_calls[id, Symbol("stn$(i)_min")])
-                @assert travel_time >= 0 "$id, $i"
+                @assert travel_time >= 0
                 problem.emergency_calls[id, delay_col] = travel_time / 60 # minutes
+                
                 enqueue!(events, (:arrive, id, t + travel_time, i), t + travel_time)
             else
                 push!(problem.wait_queue[value], id) # queue the emergency call
@@ -70,6 +61,7 @@ function simulate_events!(problem::DispatchProblem,
             h = let mintime = Inf, minindex = 0
                 for i in 1:nrow(problem.hospitals)
                     traveltime = problem.emergency_calls[id, Symbol("hosp$(i)_min")]
+                    @assert traveltime >= 0
                     if !isna(traveltime) && traveltime < mintime
                         minindex = i
                         mintime = problem.emergency_calls[id, Symbol("hosp$(i)_min")]
@@ -79,6 +71,9 @@ function simulate_events!(problem::DispatchProblem,
             end
             problem.emergency_calls[id, hospital_col] = h
             conveytime = 15 + ceil(Int, 60*problem.emergency_calls[id, Symbol("hosp$(h)_min")])
+            ### add redeployment model here
+
+            ### end redeployment model here
             returntime = ceil(Int,60*problem.hospitals[h, Symbol("stn$(value)_min")])
             t_end = t + conveytime + returntime
             enqueue!(events, (:done, id, t_end, value), t_end)
