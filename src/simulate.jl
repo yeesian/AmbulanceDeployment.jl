@@ -23,35 +23,33 @@ function simulate_events!(problem::DispatchProblem,
                           model_name::String="model",
                           verbose::Bool=false; mini_verbose=false)
     
-    amb_allocation = problem.deployment # for checking of invariance properties
-    events = form_queue(problem.emergency_calls)
-    ncalls = nrow(problem.emergency_calls)
-    dispatch_col = Symbol("$(model_name)_dispatch")
-    delay_col = Symbol("$(model_name)_delay")
-    hospital_col = Symbol("$(model_name)_hospital")
-    problem.emergency_calls[dispatch_col] = 0
-    problem.emergency_calls[delay_col] = typemax(Float64) # Inf
-    problem.emergency_calls[hospital_col] = 0
+    calls = problem.emergency_calls; ncalls = nrow(calls)
+    coverage = problem.coverage; available = problem.available
+    events = form_queue(calls); wait_queue = problem.wait_queue
+
+    dispatch_col = Symbol("$(model_name)_dispatch");  calls[dispatch_col] = 0
+    delay_col = Symbol("$(model_name)_delay");        calls[delay_col] = Inf
+    hospital_col = Symbol("$(model_name)_hospital");  calls[hospital_col] = 0
 
     while !isempty(events)
         (event, id, t, value) = dequeue!(events)
         if event == :call
-            if sum(problem.deployment[problem.coverage[value,:]]) == 0
+            if sum(problem.deployment[coverage[value,:]]) == 0
                 verbose && println("no ambulance reachable for call at $value")
-            elseif sum(problem.available[problem.coverage[value,:]]) > 0
+            elseif sum(available[coverage[value,:]]) > 0
                 i = ambulance_for(model, id, problem, verbose=mini_verbose) # assume valid i
                 
-                problem.emergency_calls[id, dispatch_col] = i
-                problem.available[i] -= 1
+                calls[id, dispatch_col] = i
+                available[i] -= 1
                 update_ambulances!(model, i, -1)
                 
-                travel_time = ceil(Int,60*problem.emergency_calls[id, Symbol("stn$(i)_min")])
+                travel_time = ceil(Int,60*calls[id, Symbol("stn$(i)_min")])
                 @assert travel_time >= 0
-                problem.emergency_calls[id, delay_col] = travel_time / 60 # minutes
+                calls[id, delay_col] = travel_time / 60 # minutes
                 
                 enqueue!(events, (:arrive, id, t + travel_time, i), t + travel_time)
             else
-                push!(problem.wait_queue[value], id) # queue the emergency call
+                push!(wait_queue[value], id) # queue the emergency call
             end
         elseif event == :arrive
             scene_time = ceil(Int,15*rand(turnaround)) # time the ambulance ends service (back at base)
@@ -60,17 +58,17 @@ function simulate_events!(problem::DispatchProblem,
         elseif event == :convey
             h = let mintime = Inf, minindex = 0
                 for i in 1:nrow(problem.hospitals)
-                    traveltime = problem.emergency_calls[id, Symbol("hosp$(i)_min")]
-                    @assert traveltime >= 0
+                    traveltime = calls[id, Symbol("hosp$(i)_min")]
                     if !isna(traveltime) && traveltime < mintime
+                        @assert traveltime >= 0
                         minindex = i
-                        mintime = problem.emergency_calls[id, Symbol("hosp$(i)_min")]
+                        mintime = calls[id, Symbol("hosp$(i)_min")]
                     end
                 end
                 minindex
             end
-            problem.emergency_calls[id, hospital_col] = h
-            conveytime = 15 + ceil(Int, 60*problem.emergency_calls[id, Symbol("hosp$(h)_min")])
+            calls[id, hospital_col] = h
+            conveytime = 15 + ceil(Int, 60*calls[id, Symbol("hosp$(h)_min")])
             ### add redeployment model here
 
             ### end redeployment model here
@@ -79,25 +77,25 @@ function simulate_events!(problem::DispatchProblem,
             enqueue!(events, (:done, id, t_end, value), t_end)
         else
             @assert event == :done
-            if sum(length(wq) for wq in problem.wait_queue[problem.coverage[:,value]]) > 0
+            if sum(length(wq) for wq in wait_queue[coverage[:,value]]) > 0
                 minindex = 0; mintime = Inf
-                for nbhd in 1:size(problem.coverage,1)
-                    if problem.coverage[nbhd,value] && length(problem.wait_queue[nbhd]) > 0
-                        arrivaltime = problem.emergency_calls[problem.wait_queue[nbhd][1], :arrival_seconds]
+                for nbhd in 1:size(coverage,1)
+                    if coverage[nbhd,value] && length(wait_queue[nbhd]) > 0
+                        arrivaltime = calls[wait_queue[nbhd][1], :arrival_seconds]
                         if arrivaltime < mintime
                             mintime = arrivaltime
                             minindex = nbhd
                         end
                     end
                 end
-                @assert minindex != 0 && t - mintime >= 0 && mintime < Inf "$minindex, $t, $mintime"
+                @assert minindex != 0 && t - mintime >= 0 && mintime < Inf
 
-                let id = shift!(problem.wait_queue[minindex])
-                    problem.emergency_calls[id, dispatch_col] = value
-                    travel_time = ceil(Int,60*problem.emergency_calls[id, Symbol("stn$(i)_min")])
+                let id = shift!(wait_queue[minindex])
+                    calls[id, dispatch_col] = value
+                    travel_time = ceil(Int,60*calls[id, Symbol("stn$(i)_min")])
                     @assert t - mintime > 0 && travel_time > 0 && t > 0
                     total_delay = (t - mintime) + travel_time
-                    problem.emergency_calls[id, delay_col] = total_delay / 60 # minutes
+                    calls[id, delay_col] = total_delay / 60 # minutes
                     enqueue!(events, (:arrive, id, t + total_delay, value), t + total_delay)
                 end
             else
@@ -107,6 +105,6 @@ function simulate_events!(problem::DispatchProblem,
         end
     end
 
-    @assert all(problem.available .== amb_allocation)
-    @assert all(problem.emergency_calls[dispatch_col] .> 0)
+    @assert all(available .== problem.deployment)
+    @assert all(calls[dispatch_col] .> 0)
 end
