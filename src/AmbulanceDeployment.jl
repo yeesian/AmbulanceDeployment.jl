@@ -40,8 +40,7 @@ module AmbulanceDeployment
            simulate_events!,
            initialize!
 
-    type DeploymentProblem{ IM <: AbstractMatrix{Int},
-                            BM <: AbstractMatrix{Bool}}
+    type DeploymentProblem{BM <: AbstractMatrix{Bool}}
         nambulances::Int
         nlocations::Int
         nregions::Int
@@ -63,7 +62,7 @@ module AmbulanceDeployment
         x
     end
 
-    type DispatchProblem
+    type DispatchProblem{BM <: AbstractMatrix{Bool}}
         emergency_calls::DataFrame
         hospitals::DataFrame
         coverage::Matrix{Bool} # (nbhd x stns)
