@@ -57,14 +57,14 @@ end
 
 function arrive_event!(
         ems::EMSEngine,
+        problem::DispatchProblem,
         redeploy::DeployModel,
         id::Int, # the id of the emergency call
         t::Int, # the time of the emergency call
-        amb::Int,
-        turnaround
+        amb::Int
     )
     arriveatscene!(redeploy, amb, t)
-    scene_time = ceil(Int,15*rand(turnaround)) # time the ambulance spends at the scene
+    scene_time = ceil(Int,15*rand(problem.turnaround)) # time the ambulance spends at the scene
     @assert scene_time > 0
     enqueue!(ems.events, (:convey, id, t + scene_time, amb), t + scene_time)
 end
@@ -159,8 +159,7 @@ end
 function simulate_events!(
         problem::DispatchProblem,
         dispatch::DispatchModel,
-        redeploy::DeployModel,
-        turnaround::Distributions.LogNormal;
+        redeploy::DeployModel;
         verbose::Bool=false
     )
     ems = EMSEngine(problem)
@@ -170,7 +169,7 @@ function simulate_events!(
         if event == :call
             call_event!(ems, problem, dispatch, redeploy, id, t, value, verbose=verbose)
         elseif event == :arrive
-            arrive_event!(ems, redeploy, id, t, value, turnaround)
+            arrive_event!(ems, problem, redeploy, id, t, value)
         elseif event == :convey
             convey_event!(ems, problem, redeploy, id, t, value)
         elseif event == :return

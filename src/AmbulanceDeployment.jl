@@ -6,7 +6,7 @@ module AmbulanceDeployment
     import Compose: Polygon, UnitBox, context, compose, linewidth
     import Compose: stroke, fill, mm, circle
     import DataFrames: DataFrame, isna, nrow
-    import Distributions: Poisson, quantile, sample
+    import Distributions: Poisson, LogNormal, quantile, sample
     import Gadfly: lab_gradient
     import GeoInterface: coordinates
     import GeoConverters: composeform
@@ -67,14 +67,16 @@ module AmbulanceDeployment
         emergency_calls::DataFrame
         hospitals::DataFrame
         coverage::Matrix{Bool} # (nbhd x stns)
+        turnaround::LogNormal
         wait_queue::Vector{Vector{Int}} # length nbhd
         available::Vector{Int}
         deployment::Vector{Int}
         
         DispatchProblem{BM}(emergency_data::DataFrame,
                             hospitals::DataFrame,
-                            coverage::BM) =
-            new(emergency_data, hospitals, coverage)
+                            coverage::BM,
+                            turnaround::LogNormal = LogNormal(3.65, 0.3)) =
+            new(emergency_data, hospitals, coverage, turnaround)
     end
 
     function initialize!(problem::DispatchProblem,
@@ -146,6 +148,11 @@ module AmbulanceDeployment
     include("plot.jl")
     #include("dispatch.jl")
 
+    type ClosestDispatch <: DispatchModel
+        drivetime::DataFrame
+        candidates::Vector{Vector{Int}}
+    end
+
     function ambulance_for(model::ClosestDispatch,
                            id::Int,
                            problem::DispatchProblem; verbose=false)
@@ -160,11 +167,6 @@ module AmbulanceDeployment
             update_ambulances!(model, i, -1)
             return i
         end
-    end
-
-    type ClosestDispatch <: DispatchModel
-        drivetime::DataFrame
-        candidates::Vector{Vector{Int}}
     end
 
     function ClosestDispatch(p::DeploymentProblem,

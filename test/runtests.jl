@@ -81,8 +81,6 @@ using Distributions
 const turnard = Distributions.LogNormal(3.65, 0.3)
 const volatile_turnard = Distributions.LogNormal(3.57, 0.5)
 const steady_turnard = Distributions.LogNormal(3.69, 0.1)
-
-
 const stn_names = [Symbol("stn$(i)_min") for i in 1:size(p.coverage,2)];
 
 # overall simulation
@@ -90,24 +88,21 @@ const stn_names = [Symbol("stn$(i)_min") for i in 1:size(p.coverage,2)];
     p = DeploymentProblem(30, length(locations), length(regions), demand, indices[train_filter],
                                   indices[test_filter], coverage[regions,:], Array{Bool,2}(adjacent))
     for turnaround in (turnard,)
-        problem = DispatchProblem(calls[inc_test_indices,:], hospitals, p.coverage)
-        problem.emergency_calls[:arrival_seconds] = 0
-        arrival_sec = cumsum(problem.emergency_calls[:interarrival_seconds])
-        problem.emergency_calls[:arrival_seconds] = arrival_sec;
-
+        problem = DispatchProblem(calls[inc_test_indices,:], hospitals, p.coverage, turnaround)
+        problem.emergency_calls[:arrival_seconds] = cumsum(problem.emergency_calls[:interarrival_seconds]);
         for name in model_names[1:2]
             print("$name: ")
-            for namb in 45:5:50 # 10:5:20 #50
+            for namb in 20:5:30 # 10:5:20 #50
                 print("$namb ")
                 x = amb_deployment[name][namb]
                 p.nambulances = namb
-
                 initialize!(problem, x)
-                dispatch = ClosestDispatch(p, problem.emergency_calls[:, stn_names], x)
-                redeploy = AmbulanceDeployment.NoRedeployModel(p, x)
-
                 srand(1234) # reset seed
-                simulate_events!(problem, dispatch, redeploy, turnaround, false)
+                simulate_events!(
+                    problem,
+                    ClosestDispatch(p, problem.emergency_calls[:, stn_names], x),
+                    AmbulanceDeployment.NoRedeployModel(p, x)
+                )
             end
             println()
         end
