@@ -466,7 +466,6 @@ end
 
 type ClosestDispatch <: DispatchModel
     drivetime::DataFrame
-    available::Vector{Int}
     candidates::Vector{Vector{Int}}
 end
 
@@ -478,12 +477,10 @@ function ClosestDispatch(p::DeploymentProblem,
     for region in 1:p.nregions
         candidates[region] = I[vec(p.coverage[region,:])]
     end
-    ClosestDispatch(drivetime, deepcopy(available), candidates)
+    ClosestDispatch(drivetime, candidates)
 end
 
-function update_ambulances!(model::ClosestDispatch, i::Int, delta::Int)
-    model.available[i] += delta
-end
+update_ambulances!(model::ClosestDispatch, i::Int, delta::Int) = nothing
 
 function available_for(model::ClosestDispatch, id::Int, problem::DispatchProblem)
     location = 0
