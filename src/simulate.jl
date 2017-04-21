@@ -37,7 +37,7 @@ function call_event!(
 
         travel_time = ceil(Int, 60*problem.emergency_calls[id, Symbol("stn$(i)_min")])
         @assert travel_time >= 0
-        calls[id, :delay] = travel_time / 60 # minutes
+        problem.emergency_calls[id, :delay] = travel_time / 60 # minutes
         
         amb = respond_to!(redeploy, i, t)
         enqueue!(events, (:arrive, id, t + travel_time, amb), t + travel_time)
@@ -152,6 +152,9 @@ function simulate_events!(problem::DispatchProblem,
                           model_name::String="model",
                           verbose::Bool=false; mini_verbose=false)
     events = form_queue(problem)
+    problem.emergency_calls[:dispatch_from] = 0
+    problem.emergency_calls[:delay] = Inf
+    problem.emergency_calls[:hospital] = 0
     while !isempty(events)
         (event, id, t, value) = dequeue!(events)
         if event == :call
