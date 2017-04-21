@@ -31,3 +31,37 @@ function NoRedeployModel(p::DeploymentProblem, available::Vector{Int})
 end
 
 reassign_ambulances!(redeploy::DeployModel) = nothing
+
+function respond_to!(redeploy::DeployModel, i::Int, t::Int)
+    @assert length(redeploy.ambulances[i]) > 0
+    amb = shift!(redeploy.ambulances[i])
+    redeploy.status[amb] = :responding
+    redeploy.fromtime[amb] = t
+    amb
+end
+
+function arriveatscene!(redeploy::DeployModel, amb::Int, t::Int)
+    @assert redeploy.status[amb] == :responding
+    redeploy.status[amb] = :atscene
+    redeploy.fromtime[amb] = t
+end
+
+function conveying!(redeploy::DeployModel, amb::Int, t::Int)
+    @assert redeploy.status[amb] == :atscene
+    redeploy.fromtime[amb] = t
+    redeploy.status[amb] = :conveying
+end
+
+function returning_to!(redeploy::DeployModel, amb::Int, t::Int)
+    @assert redeploy.status[amb] == :conveying
+    redeploy.status[amb] = :returning
+    redeploy.fromtime[amb] = t
+    redeploy.assignment[amb]
+end
+
+function returned_to!(redeploy::DeployModel, amb::Int, t::Int)
+    @assert redeploy.status[amb] == :returning
+    redeploy.fromtime[amb] = t
+    redeploy.status[amb] = :available
+    push!(redeploy.ambulances[redeploy.assignment[amb]], amb)
+end

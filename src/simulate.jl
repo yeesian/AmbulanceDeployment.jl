@@ -39,15 +39,10 @@ function simulate_events!(problem::DispatchProblem,
                 verbose && println("no ambulance reachable for call at $value")
             elseif sum(available[coverage[value,:]]) > 0
                 i = ambulance_for(model, id, problem, verbose=mini_verbose) # assume valid i
-
-                @assert length(redeploy.ambulances[i]) > 0
-                a = shift!(redeploy.ambulances[i])
-                redeploy.status[a] = :responding
-                redeploy.fromtime[a] = t
+                a = respond_to!(redeploy, i, t)
 
                 calls[id, dispatch_col] = i
-                available[i] -= 1
-                update_ambulances!(model, i, -1)
+                available[i] -= 1; update_ambulances!(model, i, -1)
 
                 travel_time = ceil(Int,60*calls[id, Symbol("stn$(i)_min")])
                 @assert travel_time >= 0
@@ -58,15 +53,13 @@ function simulate_events!(problem::DispatchProblem,
                 push!(wait_queue[value], id) # queue the emergency call
             end
         elseif event == :arrive
-            @assert redeploy.status[value] == :responding redeploy.status[value]
-            redeploy.status[value] = :atscene
-            redeploy.fromtime[value] = t
-
+            arriveatscene!(redeploy, value, t)
             scene_time = ceil(Int,15*rand(turnaround)) # time the ambulance spends at the scene
             @assert scene_time > 0
-
             enqueue!(events, (:convey, id, t + scene_time, value), t + scene_time)
         elseif event == :convey
+            # determine the hospital to convey the patient to
+            # (currently it's based on the closest hospital)
             h = let mintime = Inf, minindex = 0
                 for i in 1:nrow(problem.hospitals)
                     traveltime = calls[id, Symbol("hosp$(i)_min")]
@@ -81,31 +74,26 @@ function simulate_events!(problem::DispatchProblem,
             calls[id, hospital_col] = h
             conveytime = 15 + ceil(Int, 60*calls[id, Symbol("hosp$(h)_min")])
 
-            @assert redeploy.status[value] == :atscene
-            redeploy.status[value] = :conveying
-            redeploy.fromtime[value] = t
-
+            conveying!(redeploy, value, t)
             enqueue!(events, (:return, id, t+conveytime, value), t+conveytime)
         elseif event == :return
             ### add redeployment model here
             reassign_ambulances!(redeploy)
             ### end redeployment model here
-            @assert redeploy.status[value] == :conveying
-            redeploy.status[value] = :returning
-            redeploy.fromtime[value] = t
-
-            stn = redeploy.assignment[value]
+            stn = returning_to!(redeploy, value, t)
             returntime = ceil(Int,60*problem.hospitals[h, Symbol("stn$(stn)_min")])
             t_end = t + conveytime + returntime
-
             enqueue!(events, (:done, id, t_end, value), t_end)
         else
             @assert event == :done
             stn = redeploy.assignment[value]
             if sum(length(wq) for wq in wait_queue[coverage[:,stn]]) > 0
+                # people are waiting in a queue
                 @assert redeploy.status[value] == :returning
                 redeploy.fromtime[value] = t
                 redeploy.status[value] = :responding
+
+                # determine the person who has waited the longest
                 minindex = 0; mintime = Inf
                 for nbhd in 1:size(coverage,1)
                     if coverage[nbhd,stn] && length(wait_queue[nbhd]) > 0
@@ -118,6 +106,7 @@ function simulate_events!(problem::DispatchProblem,
                 end
                 @assert minindex != 0 && t - mintime >= 0 && mintime < Inf
 
+                # respond to the person
                 let id = shift!(wait_queue[minindex])
                     calls[id, dispatch_col] = stn
                     travel_time = ceil(Int,60*calls[id, Symbol("stn$(stn)_min")])
@@ -126,11 +115,8 @@ function simulate_events!(problem::DispatchProblem,
                     calls[id, delay_col] = total_delay / 60 # minutes
                     enqueue!(events, (:arrive, id, t + total_delay, value), t + total_delay)
                 end
-            else
-                @assert redeploy.status[value] == :returning
-                redeploy.fromtime[value] = t
-                redeploy.status[value] = :available
-                push!(redeploy.ambulances[redeploy.assignment[value]], value)
+            else # returned to base location
+                returned_to!(redeploy, value, t)
                 returned_to!(problem, stn, t)
                 update_ambulances!(model, stn, 1)
             end
