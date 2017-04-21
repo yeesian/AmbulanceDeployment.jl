@@ -5,14 +5,11 @@ function returned_to!(problem::DispatchProblem, location::Int, t::Int)
     problem.available[location] += 1
 end
 
-function form_queue(emergency_calls::DataFrame)
+function form_queue(calls::DataFrame)
     pq = PriorityQueue{Tuple{Symbol,Int,Int,Int},Int,Base.Order.ForwardOrdering}()
-    for i in 1:nrow(emergency_calls)
-        enqueue!(pq, (:call,
-                      i,
-                      emergency_calls[i, :arrival_seconds],
-                      emergency_calls[i, :neighborhood]),
-                 emergency_calls[i, :arrival_seconds])
+    for i in 1:nrow(calls)
+        t = calls[i, :arrival_seconds]
+        enqueue!(pq, (:call, i, t, calls[i, :neighborhood]), t)
     end
     pq
 end
