@@ -29,7 +29,7 @@ function NoRedeployModel(p::DeploymentProblem, available::Vector{Int})
     status = fill(:available, nambulances)
     fromtime = zeros(Int, nambulances)
     hospital = zeros(Int, nambulances)
-    NoRedeployModel(assignment, ambulances, status, hospital)
+    NoRedeployModel(assignment, ambulances, status, fromtime, hospital)
 end
 
 reassign_ambulances!(redeploy::DeployModel) = nothing
