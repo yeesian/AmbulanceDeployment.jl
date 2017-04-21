@@ -37,6 +37,8 @@ reassign_ambulances!(redeploy::DeployModel) = nothing
 function respond_to!(redeploy::DeployModel, i::Int, t::Int)
     @assert length(redeploy.ambulances[i]) > 0
     amb = shift!(redeploy.ambulances[i])
+    @assert redeploy.hospital[amb] == 0
+    @assert amb != 0
     redeploy.status[amb] = :responding
     redeploy.fromtime[amb] = t
     amb
@@ -44,12 +46,14 @@ end
 
 function arriveatscene!(redeploy::DeployModel, amb::Int, t::Int)
     @assert redeploy.status[amb] == :responding
+    @assert redeploy.hospital[amb] == 0
     redeploy.status[amb] = :atscene
     redeploy.fromtime[amb] = t
 end
 
 function conveying!(redeploy::DeployModel, amb::Int, hosp::Int, t::Int)
     @assert redeploy.status[amb] == :atscene
+    @assert redeploy.hospital[amb] != 0
     redeploy.status[amb] = :conveying
     redeploy.fromtime[amb] = t
     redeploy.hospital[amb] = hosp
@@ -57,16 +61,23 @@ end
 
 function returning_to!(redeploy::DeployModel, amb::Int, t::Int)
     @assert redeploy.status[amb] == :conveying
+    @assert redeploy.hospital[amb] != 0
     redeploy.status[amb] = :returning
     redeploy.fromtime[amb] = t
     redeploy.assignment[amb]
-    redeploy.hospital[amb] = 0
 end
 
 function returned_to!(redeploy::DeployModel, amb::Int, t::Int)
     @assert redeploy.status[amb] == :returning
-    @assert redeploy.hospital[amb] == 0
+    redeploy.hospital[amb] = 0
     redeploy.status[amb] = :available
     redeploy.fromtime[amb] = t
     push!(redeploy.ambulances[redeploy.assignment[amb]], amb)
+end
+
+function redirected!(redeploy::DeployModel, amb::Int, t::Int)
+    @assert redeploy.status[amb] == :returning
+    redeploy.hospital[amb] = 0
+    redeploy.status[amb] = :responding
+    redeploy.fromtime[amb] = t
 end
