@@ -144,7 +144,7 @@ module AmbulanceDeployment
     include("malp.jl")
     include("evaluate.jl")
     include("plot.jl")
-    include("dispatch.jl")
+    #include("dispatch.jl")
 
     function ambulance_for(model::ClosestDispatch,
                            id::Int,
@@ -161,6 +161,37 @@ module AmbulanceDeployment
             return i
         end
     end
+
+    type ClosestDispatch <: DispatchModel
+        drivetime::DataFrame
+        candidates::Vector{Vector{Int}}
+    end
+
+    function ClosestDispatch(p::DeploymentProblem,
+                             drivetime::DataFrame,
+                             available::Vector{Int})
+        candidates = Array(Vector{Int}, p.nregions)
+        I = 1:p.nlocations
+        for region in 1:p.nregions
+            candidates[region] = I[vec(p.coverage[region,:])]
+        end
+        ClosestDispatch(drivetime, candidates)
+    end
+
+    update_ambulances!(model::ClosestDispatch, i::Int, delta::Int) = nothing
+
+    function available_for(model::ClosestDispatch, id::Int, problem::DispatchProblem)
+        location = 0
+        min_time = typemax(Int)
+        for i in model.candidates[problem.emergency_calls[id, :neighborhood]]
+            if problem.available[i] > 0 && model.drivetime[id, i] < min_time
+                location = i
+                min_time = model.drivetime[id, i]
+            end
+        end
+        location
+    end
+
 
     include("redeploy.jl")
     include("simulate.jl")
