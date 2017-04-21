@@ -90,8 +90,6 @@ module AmbulanceDeployment
     function ambulance_for(model::DispatchModel,
                            id::Int,
                            problem::DispatchProblem; verbose=false)
-        #region = problem.emergency_calls[id, :neighborhood]
-        #i = available_for(model, region, problem)
         i = available_for(model, id, problem, verbose=verbose)
         verbose && println("dispatching $i")
         if i == 0
@@ -120,6 +118,12 @@ module AmbulanceDeployment
             end
         end
         earliest_location
+    end
+
+    function returned_to!(problem::DispatchProblem, location::Int, t::Int)
+        @assert problem.deployment[location] > 0
+        @assert problem.available[location] >= 0
+        problem.available[location] += 1
     end
 
     type Params

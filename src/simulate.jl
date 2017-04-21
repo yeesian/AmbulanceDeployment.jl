@@ -1,8 +1,19 @@
 
-function returned_to!(problem::DispatchProblem, location::Int, t::Int)
-    @assert problem.deployment[location] > 0
-    @assert problem.available[location] >= 0
-    problem.available[location] += 1
+type EMSEngine
+    eventlog::DataFrame
+    events::PriorityQueue{Tuple{Symbol,Int,Int,Int},Int,Base.Order.ForwardOrdering}
+end
+
+function EMSEngine(problem::DispatchProblem)
+    ncalls = nrow(problem.emergency_calls)
+    eventlog = DataFrame(
+        id = 1:ncalls,
+        dispatch_from = zeros(Int, ncalls),
+        delay = fill(Inf, ncalls),
+        hospital = zeros(Int, ncalls)
+    )
+    events = form_queue(problem.emergency_calls)
+    EMSEngine(eventlog, events)
 end
 
 function form_queue(calls::DataFrame)
@@ -13,16 +24,16 @@ function form_queue(calls::DataFrame)
     end
     pq
 end
-form_queue(problem::DispatchProblem) = form_queue(problem.emergency_calls)
 
 function call_event!(
-        events::PriorityQueue,
+        ems::EMSEngine,
         problem::DispatchProblem,
         dispatch::DispatchModel,
         redeploy::DeployModel,
         id::Int, # the id of the emergency call
         t::Int, # the time of the emergency call
-        nbhd::Int # the neighborhood the call is from
+        nbhd::Int; # the neighborhood the call is from
+        verbose::Bool = false
     )
     if sum(problem.deployment[problem.coverage[nbhd,:]]) == 0
         verbose && println("no ambulance reachable for call at $nbhd")
@@ -30,22 +41,22 @@ function call_event!(
         i = ambulance_for(dispatch, id, problem)
         @assert i > 0 # assume valid i (enforced by <if> condition)
         update_ambulances!(dispatch, i, -1)
-        problem.emergency_calls[id, :dispatch_from] = i
+        ems.eventlog[id, :dispatch_from] = i
         problem.available[i] -= 1
 
         travel_time = ceil(Int, 60*problem.emergency_calls[id, Symbol("stn$(i)_min")])
         @assert travel_time >= 0
-        problem.emergency_calls[id, :delay] = travel_time / 60 # minutes
+        ems.eventlog[id, :delay] = travel_time / 60 # minutes
         
         amb = respond_to!(redeploy, i, t)
-        enqueue!(events, (:arrive, id, t + travel_time, amb), t + travel_time)
+        enqueue!(ems.events, (:arrive, id, t + travel_time, amb), t + travel_time)
     else
         push!(problem.wait_queue[nbhd], id) # queue the emergency call
     end
 end
 
 function arrive_event!(
-        events::PriorityQueue,
+        ems::EMSEngine,
         redeploy::DeployModel,
         id::Int, # the id of the emergency call
         t::Int, # the time of the emergency call
@@ -55,12 +66,12 @@ function arrive_event!(
     arriveatscene!(redeploy, amb, t)
     scene_time = ceil(Int,15*rand(turnaround)) # time the ambulance spends at the scene
     @assert scene_time > 0
-    enqueue!(events, (:convey, id, t + scene_time, amb), t + scene_time)
+    enqueue!(ems.events, (:convey, id, t + scene_time, amb), t + scene_time)
 end
 
 "determine the hospital to convey the patient to (currently it's based on the closest hospital)"
 function convey_event!(
-        events::PriorityQueue,
+        ems::EMSEngine,
         problem::DispatchProblem,
         redeploy::DeployModel,
         id::Int, # the id of the emergency call
@@ -78,14 +89,15 @@ function convey_event!(
         minindex
     end
     @assert h != 0
-    redeploy.hospital[amb] = problem.emergency_calls[id, :hospital] = h
+    redeploy.hospital[amb] = ems.eventlog[id, :hospital] = h
     conveytime = 15 + ceil(Int, 60*problem.emergency_calls[id, Symbol("hosp$(h)_min")])
+    @assert conveytime >= 0 conveytime
     conveying!(redeploy, amb, h, t)
-    enqueue!(events, (:return, id, t+conveytime, amb), t+conveytime)
+    enqueue!(ems.events, (:return, id, t+conveytime, amb), t+conveytime)
 end
 
 function return_event!(
-        events::PriorityQueue,
+        ems::EMSEngine,
         problem::DispatchProblem,
         redeploy::DeployModel,
         id::Int,
@@ -95,12 +107,13 @@ function return_event!(
     stn = returning_to!(redeploy, amb, t)
     h = redeploy.hospital[amb]
     returntime = ceil(Int,60*problem.hospitals[h, Symbol("stn$(stn)_min")])
+    @assert returntime >= 0 returntime
     t_end = t + returntime
-    enqueue!(events, (:done, id, t_end, amb), t_end)
+    enqueue!(ems.events, (:done, id, t_end, amb), t_end)
 end
 
 function done_event!(
-        events::PriorityQueue,
+        ems::EMSEngine,
         problem::DispatchProblem,
         dispatch::DispatchModel,
         redeploy::DeployModel,
@@ -108,8 +121,7 @@ function done_event!(
         t::Int,
         amb::Int
     )
-    stn = redeploy.assignment[amb]
-    @assert stn > 0
+    stn = redeploy.assignment[amb]; @assert stn > 0
     if sum(length(wq) for wq in problem.wait_queue[problem.coverage[:,stn]]) > 0
         # people are waiting in a queue
         redirected!(redeploy, amb, t)
@@ -124,15 +136,18 @@ function done_event!(
                 end
             end
         end
-        @assert minindex != 0 && t - mintime >= 0 && mintime < Inf
+        @assert minindex != 0
+        @assert t - mintime >= 0
+        @assert 0 <= mintime < Inf
         # respond to the person
         let id = shift!(problem.wait_queue[minindex])
-            problem.emergency_calls[id, :dispatch_from] = stn
+            ems.eventlog[id, :dispatch_from] = stn
             travel_time = ceil(Int,60*problem.emergency_calls[id, Symbol("stn$(stn)_min")])
-            @assert t - mintime >= 0 && travel_time > 0 && t > 0
-            total_delay = (t - mintime) + travel_time
-            problem.emergency_calls[id, :delay] = total_delay / 60 # minutes
-            enqueue!(events, (:arrive, id, t + total_delay, amb), t + total_delay)
+            @assert travel_time >= 0
+            total_delay = (t - mintime) + travel_time; @assert total_delay >= 0
+            tarrive = t + total_delay; @assert t + total_delay >= 0 "$t, $total_delay"
+            ems.eventlog[id, :delay] = total_delay / 60 # minutes
+            enqueue!(ems.events, (:arrive, id, tarrive, amb), tarrive)
         end
     else # returned to base location
         returned_to!(redeploy, amb, t)
@@ -145,29 +160,28 @@ function simulate_events!(
         problem::DispatchProblem,
         dispatch::DispatchModel,
         redeploy::DeployModel,
-        turnaround::Distributions.LogNormal,
-        verbose::Bool=false; mini_verbose=false
+        turnaround::Distributions.LogNormal;
+        verbose::Bool=false
     )
-    events = form_queue(problem)
-    problem.emergency_calls[:dispatch_from] = 0
-    problem.emergency_calls[:delay] = Inf
-    problem.emergency_calls[:hospital] = 0
-    while !isempty(events)
-        (event, id, t, value) = dequeue!(events)
+    ems = EMSEngine(problem)
+    while !isempty(ems.events)
+        (event, id, t, value) = dequeue!(ems.events)
+        @assert t >= 0 # in case of integer overflow (when calls > ambulances)
         if event == :call
-            call_event!(events, problem, dispatch, redeploy, id, t, value)
+            call_event!(ems, problem, dispatch, redeploy, id, t, value, verbose=verbose)
         elseif event == :arrive
-            arrive_event!(events, redeploy, id, t, value, turnaround)
+            arrive_event!(ems, redeploy, id, t, value, turnaround)
         elseif event == :convey
-            convey_event!(events, problem, redeploy, id, t, value)
+            convey_event!(ems, problem, redeploy, id, t, value)
         elseif event == :return
             reassign_ambulances!(redeploy)
-            return_event!(events, problem, redeploy, id, t, value)
+            return_event!(ems, problem, redeploy, id, t, value)
         else
             @assert event == :done
-            done_event!(events, problem, dispatch, redeploy, id, t, value)
+            done_event!(ems, problem, dispatch, redeploy, id, t, value)
         end
     end
-    @assert all(problem.available .== problem.deployment) "$(problem.available), $(problem.deployment)"
-    @assert all(problem.emergency_calls[:dispatch_from] .> 0)
+    @assert all(problem.available .== problem.deployment)
+    @assert all(ems.eventlog[:dispatch_from] .>= 0)
+    ems.eventlog
 end
