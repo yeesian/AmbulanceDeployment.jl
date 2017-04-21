@@ -18,7 +18,7 @@ function NoRedeployModel(p::DeploymentProblem, available::Vector{Int})
     nambulances = sum(available)
     assignment = zeros(Int, nambulances)
     k = 1
-    ambulances = [Int[] for i in 1:nambulances]
+    ambulances = [Int[] for i in 1:length(available)]
     for i in eachindex(available), j in 1:available[i]
         assignment[k] = i
         push!(ambulances[i], k)
