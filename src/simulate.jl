@@ -1,7 +1,7 @@
 
-type EMSEngine
+type EMSEngine{T}
     eventlog::DataFrame
-    events::PriorityQueue{Tuple{Symbol,Int,Int,Int},Int,Base.Order.ForwardOrdering}
+    eventqueue::PriorityQueue{T,Int,Base.Order.ForwardOrdering}
 end
 
 function EMSEngine(problem::DispatchProblem)
@@ -12,17 +12,12 @@ function EMSEngine(problem::DispatchProblem)
         delay = fill(Inf, ncalls),
         hospital = zeros(Int, ncalls)
     )
-    events = form_queue(problem.emergency_calls)
-    EMSEngine(eventlog, events)
-end
-
-function form_queue(calls::DataFrame)
-    pq = PriorityQueue{Tuple{Symbol,Int,Int,Int},Int,Base.Order.ForwardOrdering}()
-    for i in 1:nrow(calls)
-        t = calls[i, :arrival_seconds]
-        enqueue!(pq, (:call, i, t, calls[i, :neighborhood]), t)
+    eventqueue = PriorityQueue{Tuple{Symbol,Int,Int,Int},Int,Base.Order.ForwardOrdering}()
+    for i in 1:nrow(problem.emergency_calls)
+        t = problem.emergency_calls[i, :arrival_seconds]
+        enqueue!(eventqueue, (:call, i, t, problem.emergency_calls[i, :neighborhood]), t)
     end
-    pq
+    EMSEngine{Tuple{Symbol,Int,Int,Int}}(eventlog, eventqueue)
 end
 
 function call_event!(
@@ -49,7 +44,7 @@ function call_event!(
         ems.eventlog[id, :delay] = travel_time / 60 # minutes
         
         amb = respond_to!(redeploy, i, t)
-        enqueue!(ems.events, (:arrive, id, t + travel_time, amb), t + travel_time)
+        enqueue!(ems.eventqueue, (:arrive, id, t + travel_time, amb), t + travel_time)
     else
         push!(problem.wait_queue[nbhd], id) # queue the emergency call
     end
@@ -66,7 +61,7 @@ function arrive_event!(
     arriveatscene!(redeploy, amb, t)
     scene_time = ceil(Int,15*rand(problem.turnaround)) # time the ambulance spends at the scene
     @assert scene_time > 0
-    enqueue!(ems.events, (:convey, id, t + scene_time, amb), t + scene_time)
+    enqueue!(ems.eventqueue, (:convey, id, t + scene_time, amb), t + scene_time)
 end
 
 "determine the hospital to convey the patient to (currently it's based on the closest hospital)"
@@ -93,7 +88,7 @@ function convey_event!(
     conveytime = 15 + ceil(Int, 60*problem.emergency_calls[id, Symbol("hosp$(h)_min")])
     @assert conveytime >= 0 conveytime
     conveying!(redeploy, amb, h, t)
-    enqueue!(ems.events, (:return, id, t+conveytime, amb), t+conveytime)
+    enqueue!(ems.eventqueue, (:return, id, t+conveytime, amb), t+conveytime)
 end
 
 function return_event!(
@@ -109,7 +104,7 @@ function return_event!(
     returntime = ceil(Int,60*problem.hospitals[h, Symbol("stn$(stn)_min")])
     @assert returntime >= 0 returntime
     t_end = t + returntime
-    enqueue!(ems.events, (:done, id, t_end, amb), t_end)
+    enqueue!(ems.eventqueue, (:done, id, t_end, amb), t_end)
 end
 
 function done_event!(
@@ -147,7 +142,7 @@ function done_event!(
             total_delay = (t - mintime) + travel_time; @assert total_delay >= 0
             tarrive = t + total_delay; @assert t + total_delay >= 0 "$t, $total_delay"
             ems.eventlog[id, :delay] = total_delay / 60 # minutes
-            enqueue!(ems.events, (:arrive, id, tarrive, amb), tarrive)
+            enqueue!(ems.eventqueue, (:arrive, id, tarrive, amb), tarrive)
         end
     else # returned to base location
         returned_to!(redeploy, amb, t)
@@ -163,8 +158,8 @@ function simulate_events!(
         verbose::Bool=false
     )
     ems = EMSEngine(problem)
-    while !isempty(ems.events)
-        (event, id, t, value) = dequeue!(ems.events)
+    while !isempty(ems.eventqueue)
+        (event, id, t, value) = dequeue!(ems.eventqueue)
         @assert t >= 0 # in case of integer overflow (when calls > ambulances)
         if event == :call
             call_event!(ems, problem, dispatch, redeploy, id, t, value, verbose=verbose)
