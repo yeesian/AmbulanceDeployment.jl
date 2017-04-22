@@ -89,20 +89,17 @@ const stn_names = [Symbol("stn$(i)_min") for i in 1:size(p.coverage,2)];
                                   indices[test_filter], coverage[regions,:], Array{Bool,2}(adjacent))
     for turnaround in (turnard,)
         problem = DispatchProblem(calls[inc_test_indices,:], hospitals, p.coverage, turnaround)
+        closestdispatch = ClosestDispatch(p, problem.emergency_calls[:, stn_names])
         problem.emergency_calls[:arrival_seconds] = cumsum(problem.emergency_calls[:interarrival_seconds]);
         for name in model_names[1:2]
-            print("$name: ")
+            print(name, ": ")
             for namb in 20:5:30 # 10:5:20 #50
-                print("$namb ")
+                print(namb, " ")
                 x = amb_deployment[name][namb]
                 p.nambulances = namb
                 initialize!(problem, x)
                 srand(1234) # reset seed
-                simulate_events!(
-                    problem,
-                    ClosestDispatch(p, problem.emergency_calls[:, stn_names], x),
-                    AmbulanceDeployment.NoRedeployModel(p, x)
-                )
+                simulate_events!(problem, closestdispatch, NoRedeployModel(p, x))
             end
             println()
         end

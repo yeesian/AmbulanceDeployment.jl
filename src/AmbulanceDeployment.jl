@@ -27,6 +27,8 @@ module AmbulanceDeployment
            LPDispatchBacklog,
            LPDispatchRandom,
 
+           NoRedeployModel,
+
            solve,
            evaluate,
            deployment,
@@ -91,7 +93,8 @@ module AmbulanceDeployment
 
     function ambulance_for(model::DispatchModel,
                            id::Int,
-                           problem::DispatchProblem; verbose=false)
+                           problem::DispatchProblem;
+                           verbose::Bool=false)
         i = available_for(model, id, problem, verbose=verbose)
         verbose && println("dispatching $i")
         if i == 0
@@ -103,8 +106,7 @@ module AmbulanceDeployment
         end
     end
 
-    function waiting_for(j::Int,
-                         problem::DispatchProblem)
+    function waiting_for(j::Int, problem::DispatchProblem)
         earliest_time = Inf
         earliest_location = 0
         for i in 1:length(problem.amb_queue)
@@ -169,9 +171,7 @@ module AmbulanceDeployment
         end
     end
 
-    function ClosestDispatch(p::DeploymentProblem,
-                             drivetime::DataFrame,
-                             available::Vector{Int})
+    function ClosestDispatch(p::DeploymentProblem, drivetime::DataFrame)
         candidates = Array(Vector{Int}, p.nregions)
         I = 1:p.nlocations
         for region in 1:p.nregions
