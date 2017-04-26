@@ -68,6 +68,7 @@ module AmbulanceDeployment
     type DispatchProblem
         emergency_calls::DataFrame
         hospitals::DataFrame
+        stations::DataFrame
         coverage::Matrix{Bool} # (nbhd x stns)
         turnaround::LogNormal
         wait_queue::Vector{Vector{Int}} # length nbhd
@@ -76,9 +77,10 @@ module AmbulanceDeployment
         
         DispatchProblem{BM}(emergency_data::DataFrame,
                             hospitals::DataFrame,
+                            stations::DataFrame,
                             coverage::BM,
                             turnaround::LogNormal = LogNormal(3.65, 0.3)) =
-            new(emergency_data, hospitals, coverage, turnaround)
+            new(emergency_data, hospitals, stations, coverage, turnaround)
     end
 
     function initialize!(problem::DispatchProblem,
