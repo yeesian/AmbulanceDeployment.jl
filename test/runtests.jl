@@ -6,6 +6,7 @@ adjacent_nbhd = DataFrames.readtable("data/processed/2-adjacent_nbhd.csv")
 coverage = JLD.load("data/processed/3-coverage.jld", "stn_coverage")
 incidents = DataFrames.readtable("data/processed/3-incidents_drivetime.csv");
 hospitals = readtable("data/processed/3-hospitals.csv");
+stations = DataFrames.readtable("data/processed/3-stations.csv");
 
 
 regions = Int[parse(Int,string(x)[2:end]) for x in names(hourly_calls[5:end])]
@@ -86,23 +87,69 @@ const stn_names = [Symbol("stn$(i)_min") for i in 1:size(p.coverage,2)];
 # overall simulation
 @time begin
     p = DeploymentProblem(30, length(locations), length(regions), demand, indices[train_filter],
-                                  indices[test_filter], coverage[regions,:], Array{Bool,2}(adjacent))
+                          indices[test_filter], coverage[regions,:], Array{Bool,2}(adjacent))
     for turnaround in (turnard,)
-        problem = DispatchProblem(calls[inc_test_indices,:], hospitals, p.coverage, turnaround)
+        problem = DispatchProblem(calls[inc_test_indices,:], hospitals, stations, p.coverage, turnaround)
         closestdispatch = ClosestDispatch(p, problem.emergency_calls[:, stn_names])
         problem.emergency_calls[:arrival_seconds] = cumsum(problem.emergency_calls[:interarrival_seconds]);
-        for name in model_names[1:2]
+        for name in model_names
             print(name, ": ")
-            for namb in 20:5:30 # 10:5:20 #50
-                print(namb, " ")
-                x = amb_deployment[name][namb]
-                p.nambulances = namb
-                initialize!(problem, x)
-                srand(1234) # reset seed
-                simulate_events!(problem, closestdispatch, NoRedeployModel(p, x))
+            for namb in 30:5:50 # 10:5:20 #50
+                print(namb, " (")
+                for lambda in (0.0, 100.0, 1000.0, 10_000.0, 100_000.0)
+                    print(lambda, " ")
+                    x = amb_deployment[name][namb]
+                    p.nambulances = namb
+                    initialize!(problem, x)
+                    noredeploy = NoRedeployModel(p, x, hospitals, stations, lambda=lambda)
+                    srand(1234) # reset seed
+                    @time df = simulate_events!(problem, closestdispatch, noredeploy)
+                    DataFrames.writetable("$(name)_n$(namb)_lambda$(Int(lambda)).csv", df)
+                end
+                println(") ")
             end
-            println()
         end
         #DataFrames.writetable("data/processed/4-overall_simulation.csv", problem.emergency_calls)
     end
 end
+
+
+# p = DeploymentProblem(30, length(locations), length(regions), demand, indices[train_filter],
+#                                   indices[test_filter], coverage[regions,:], Array{Bool,2}(adjacent))
+# turnaround = turnard
+# problem = DispatchProblem(calls[inc_test_indices,:], hospitals, stations, p.coverage, turnaround)
+# dispatch = ClosestDispatch(p, problem.emergency_calls[:, stn_names])
+# problem.emergency_calls[:arrival_seconds] = cumsum(problem.emergency_calls[:interarrival_seconds]);
+# name = model_names[1]
+# namb = 35
+# x = amb_deployment[name][namb]
+# p.nambulances = namb
+# initialize!(problem, x)
+# redeploy = NoRedeployModel(p, x, hospitals, stations)
+# srand(1234) # reset seed
+# simulate_events!(problem, dispatch, redeploy)
+
+
+
+# dispatch = closestdispatch
+# redeploy = noredeploy
+# ems = AmbulanceDeployment.EMSEngine(problem)
+# import Base.Collections: PriorityQueue, enqueue!, dequeue!
+
+# (event, id, t, value) = dequeue!(ems.eventqueue)
+
+# runevent(event) =
+# if event == :call
+#     AmbulanceDeployment.call_event!(ems, problem, dispatch, redeploy, id, t, value)
+# elseif event == :arrive
+#     AmbulanceDeployment.arrive_event!(ems, problem, redeploy, id, t, value)
+# elseif event == :convey
+#     AmbulanceDeployment.convey_event!(ems, problem, redeploy, id, t, value)
+# elseif event == :return
+#     AmbulanceDeployment.reassign_ambulances!(problem, redeploy)
+#     AmbulanceDeployment.return_event!(ems, problem, redeploy, id, t, value)
+# else
+#     @assert event == :done
+#     AmbulanceDeployment.done_event!(ems, problem, dispatch, redeploy, id, t, value)
+# end;
+# simulate_events!(problem, closestdispatch, noredeploy)

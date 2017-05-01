@@ -71,9 +71,10 @@ module AmbulanceDeployment
         stations::DataFrame
         coverage::Matrix{Bool} # (nbhd x stns)
         turnaround::LogNormal
-        wait_queue::Vector{Vector{Int}} # length nbhd
-        available::Vector{Int}
         deployment::Vector{Int}
+
+        wait_queue::Vector{Vector{Int}} # length nbhd
+        available::Vector{Int} # length stns
         
         DispatchProblem{BM}(emergency_data::DataFrame,
                             hospitals::DataFrame,

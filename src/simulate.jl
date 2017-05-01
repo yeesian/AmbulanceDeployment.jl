@@ -34,9 +34,10 @@ function call_event!(
         verbose && println("no ambulance reachable for call at $nbhd")
     elseif sum(problem.available[problem.coverage[nbhd,:]]) > 0
         i = ambulance_for(dispatch, id, problem)
-        @assert i > 0 # assume valid i (enforced by <if> condition)
+        @assert i > 0 "dispatch from $i" # assume valid i (enforced by <if> condition) 
         update_ambulances!(dispatch, i, -1)
         ems.eventlog[id, :dispatch_from] = i
+        @assert problem.available[i] > 0
         problem.available[i] -= 1
 
         travel_time = ceil(Int, 60*problem.emergency_calls[id, Symbol("stn$(i)_min")])
@@ -59,7 +60,8 @@ function arrive_event!(
         amb::Int
     )
     arriveatscene!(redeploy, amb, t)
-    scene_time = ceil(Int,15*rand(problem.turnaround)) # time the ambulance spends at the scene
+    # time the ambulance spends at the scene
+    scene_time = ceil(Int,60*0.4*rand(problem.turnaround)) # 60sec*0.4*mean(40minutes) ~ 15minutes
     @assert scene_time > 0
     enqueue!(ems.eventqueue, (:convey, id, t + scene_time, amb), t + scene_time)
 end
@@ -85,7 +87,7 @@ function convey_event!(
     end
     @assert h != 0
     redeploy.hospital[amb] = ems.eventlog[id, :hospital] = h
-    conveytime = 15 + ceil(Int, 60*problem.emergency_calls[id, Symbol("hosp$(h)_min")])
+    conveytime = 60*15 + ceil(Int, 60*problem.emergency_calls[id, Symbol("hosp$(h)_min")]) # ~20minutes
     @assert conveytime >= 0 conveytime
     conveying!(redeploy, amb, h, t)
     enqueue!(ems.eventqueue, (:return, id, t+conveytime, amb), t+conveytime)
@@ -101,7 +103,7 @@ function return_event!(
     )
     stn = returning_to!(redeploy, amb, t)
     h = redeploy.hospital[amb]
-    returntime = ceil(Int,60*problem.hospitals[h, Symbol("stn$(stn)_min")])
+    returntime = ceil(Int,60*problem.hospitals[h, Symbol("stn$(stn)_min")]) # ~ 10minutes
     @assert returntime >= 0 returntime
     t_end = t + returntime
     enqueue!(ems.eventqueue, (:done, id, t_end, amb), t_end)
@@ -146,6 +148,7 @@ function done_event!(
         end
     else # returned to base location
         returned_to!(redeploy, amb, t)
+        @assert problem.available[stn] >= 0
         returned_to!(problem, stn, t)
         update_ambulances!(dispatch, stn, 1)
     end
@@ -158,8 +161,17 @@ function simulate_events!(
         verbose::Bool=false
     )
     ems = EMSEngine(problem)
+    # @show problem.available
+    # @show redeploy.ambulances
+    k = 0
     while !isempty(ems.eventqueue)
+        if k > 10_000
+            break
+        else
+            k += 1
+        end
         (event, id, t, value) = dequeue!(ems.eventqueue)
+        # @show (event, id, t, value)
         @assert t >= 0 # in case of integer overflow (when calls > ambulances)
         if event == :call
             call_event!(ems, problem, dispatch, redeploy, id, t, value, verbose=verbose)
@@ -168,14 +180,19 @@ function simulate_events!(
         elseif event == :convey
             convey_event!(ems, problem, redeploy, id, t, value)
         elseif event == :return
-            reassign_ambulances!(redeploy)
+            reassign_ambulances!(problem, redeploy, t)
             return_event!(ems, problem, redeploy, id, t, value)
         else
             @assert event == :done
             done_event!(ems, problem, dispatch, redeploy, id, t, value)
         end
+        # @show problem.available
+        # @show redeploy.ambulances
+        for i in eachindex(problem.available)
+            @assert problem.available[i] == length(redeploy.ambulances[i])
+        end
     end
-    @assert all(problem.available .== problem.deployment)
+    # @assert all(problem.available .== problem.deployment)
     @assert all(ems.eventlog[:dispatch_from] .>= 0)
     ems.eventlog
 end
