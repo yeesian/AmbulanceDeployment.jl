@@ -10,7 +10,7 @@ module AmbulanceDeployment
     import Gadfly: lab_gradient
     import GeoInterface: coordinates
     import GeoConverters: composeform
-    import Gurobi: GurobiSolver
+    import Gurobi: GurobiSolver, chg_coeffs!
     import Winston: FramedPlot, Curve, Legend, setattr, add
     import Distributions
     import StatsBase
@@ -128,7 +128,7 @@ module AmbulanceDeployment
     end
 
     function returned_to!(problem::DispatchProblem, location::Int, t::Int)
-        @assert problem.deployment[location] > 0
+        # @assert problem.deployment[location] > 0
         @assert problem.available[location] >= 0
         problem.available[location] += 1
     end
