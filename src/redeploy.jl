@@ -8,7 +8,9 @@ abstract DeployModel
 type NoRedeployModel <: DeployModel
     model::JuMP.Model
     w::Matrix{JuMP.Variable}
-    eta::Matrix{JuMP.Variable}
+    eta1::Vector{JuMP.Variable}
+    eta2::Matrix{JuMP.Variable}
+    shortfall::Vector{JuMP.ConstraintRef}
     lambda::Float64
 
     hosp2stn::Matrix{Float64}
@@ -54,19 +56,28 @@ function NoRedeployModel(
 
     m = JuMP.Model(solver=solver)
     JuMP.@variable(m, w[1:nambulances, 1:nlocations], Bin)
-    JuMP.@variable(m, eta[1:nambulances, 1:nlocations] >= 0)
+    JuMP.@variable(m, eta1[1:nlocations] >= 0)
+    JuMP.@variable(m, eta2[1:nambulances, 1:nlocations] >= 0)
+    
     JuMP.@constraint(m, [a=1:nambulances], sum(w[a,i] for i in 1:nlocations) == 1)
-    JuMP.@constraint(m, [a=1:nambulances, i=1:nlocations], eta[a,i] >= w[a,i] - (assignment[a] == i))
-    JuMP.@constraint(m, [a=1:nambulances, i=1:nlocations], eta[a,i] >= - (w[a,i] - (assignment[a] == i)))
+    JuMP.@constraint(m, shortfall[i=1:nlocations], eta1[i] >= available[i] - sum(w[a,i] for a in 1:nambulances))
+    JuMP.@constraint(m, [a=1:nambulances, i=1:nlocations], eta2[a,i] >= w[a,i] - (assignment[a] == i))
+    JuMP.@constraint(m, [a=1:nambulances, i=1:nlocations], eta2[a,i] >= - (w[a,i] - (assignment[a] == i)))
+    
+    JuMP.@objective(m, Min,
+        sum(eta1[i] for i in 1:nlocations) +
+        lambda * sum(eta2[a,i] for a in 1:nambulances, i in 1:nlocations)
+    )
+    JuMP.build(m)
 
-    NoRedeployModel(m, w, eta, lambda, hosp2stn, stn2stn, assignment, ambulances, status, fromtime, hospital)
+    NoRedeployModel(m, w, eta1, eta2, shortfall, lambda, hosp2stn, stn2stn, assignment, ambulances, status, fromtime, hospital)
 end
 
-function reassign_ambulances!(problem::DispatchProblem, redeploy::DeployModel, t::Int)
+function reassign_ambulances!(ems, problem::DispatchProblem, redeploy::DeployModel, t::Int)
     # (1) Optimize Dynamic Assignment Problem
     cost(a::Int,i::Int) =
         if redeploy.status[a] == :available
-            100 + redeploy.stn2stn[redeploy.assignment[a],i]
+            redeploy.stn2stn[redeploy.assignment[a],i]
         elseif redeploy.status[a] == :responding
             50 # + redeploy.hosp2stn[redeploy.hospital[a],i]
         elseif redeploy.status[a] == :atscene
@@ -74,12 +85,14 @@ function reassign_ambulances!(problem::DispatchProblem, redeploy::DeployModel, t
         elseif redeploy.status[a] == :conveying
             30 # + redeploy.hosp2stn[redeploy.hospital[a],i]
         elseif redeploy.status[a] == :returning
-            10
+            15 - redeploy.fromtime[a]
+        elseif redeploy.status[a] == :redeploying
+            t - redeploy.fromtime[a]
         end
-    JuMP.setobjective(redeploy.model, :Min, sum(
-        cost(a,i)*redeploy.w[a,i] + redeploy.lambda*redeploy.eta[a,i]
-        for a in eachindex(redeploy.assignment), i in eachindex(redeploy.ambulances)
-    ))
+    
+    for s in redeploy.shortfall, a in 1:size(redeploy.w,1), i in 1:size(redeploy.w,2)
+        chg_coeffs!(redeploy.model.internalModel.inner, [s.idx], [redeploy.w[a,i].col], [cost(a,i)/60-1])
+    end
     JuMP.solve(redeploy.model)
 
     # (2) Reassign ambulances based on JuMP.getvalue(redeploy.w)
@@ -88,13 +101,12 @@ function reassign_ambulances!(problem::DispatchProblem, redeploy::DeployModel, t
             if redeploy.assignment[a] != i # redeploy an existing ambulance
                 if redeploy.status[a] == :available
                     @assert problem.available[redeploy.assignment[a]] > 0
-                    problem.available[i] += 1; problem.available[redeploy.assignment[a]] -= 1
-                    t_end = t + ceil(Int, 60*redeploy.stn2stn[redeploy.assignment[a],i])
+                    problem.available[redeploy.assignment[a]] -= 1
+                    t_end = t + ceil(Int, 0*60*redeploy.stn2stn[redeploy.assignment[a],i])
+                    redeploying_to!(redeploy, a, i, t)
                     enqueue!(ems.eventqueue, (:done, 0, t_end, a), t_end)
-                    redeploying_to!(redeploy, a, t)
                 end
             end
-            redeploy.assignment[a] = i
         end
     end
 end
@@ -133,16 +145,19 @@ function returning_to!(redeploy::DeployModel, amb::Int, t::Int)
     redeploy.assignment[amb]
 end
 
-function redeploying_to!(redeploy::DeployModel, amb::Int, t::Int)
-    @assert in(amb, redeploy.ambulances)
-    deleteat!(redeploy.ambulances, findfirst(redeploy.ambulances, amb))
-    @assert !in(amb, redeploy.ambulances)
+function redeploying_to!(redeploy::DeployModel, amb::Int, i::Int, t::Int)
+    ambulances = redeploy.ambulances[redeploy.assignment[amb]]
+    @assert !in(amb, redeploy.ambulances[i])
+    @assert in(amb, ambulances)
+    deleteat!(ambulances, findfirst(ambulances, amb))
+    @assert !in(amb, ambulances)
+    redeploy.assignment[amb] = i
     redeploy.status[amb] = :redeploying
     redeploy.fromtime[amb] = t
 end
 
 function returned_to!(redeploy::DeployModel, amb::Int, t::Int)
-    @assert redeploy.status[amb] == :returning "$amb: $(redeploy.status[amb])"
+    @assert in(redeploy.status[amb], (:returning, :redeploying)) "$amb: $(redeploy.status[amb])"
     redeploy.hospital[amb] = 0
     redeploy.status[amb] = :available
     redeploy.fromtime[amb] = t
@@ -151,7 +166,7 @@ function returned_to!(redeploy::DeployModel, amb::Int, t::Int)
 end
 
 function redirected!(redeploy::DeployModel, amb::Int, t::Int)
-    @assert redeploy.status[amb] == :returning "$amb: $(redeploy.status[amb])"
+    @assert in(redeploy.status[amb], (:returning, :redeploying)) "$amb: $(redeploy.status[amb])"
     redeploy.hospital[amb] = 0
     redeploy.status[amb] = :responding
     redeploy.fromtime[amb] = t
