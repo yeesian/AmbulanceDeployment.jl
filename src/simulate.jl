@@ -148,7 +148,6 @@ function done_event!(
         end
     else # returned to base location
         returned_to!(redeploy, amb, t)
-        @assert problem.available[stn] >= 0
         returned_to!(problem, stn, t)
         update_ambulances!(dispatch, stn, 1)
     end
@@ -180,7 +179,7 @@ function simulate_events!(
         elseif event == :convey
             convey_event!(ems, problem, redeploy, id, t, value)
         elseif event == :return
-            reassign_ambulances!(problem, redeploy, t)
+            reassign_ambulances!(ems, problem, redeploy, t)
             return_event!(ems, problem, redeploy, id, t, value)
         else
             @assert event == :done
@@ -189,7 +188,7 @@ function simulate_events!(
         # @show problem.available
         # @show redeploy.ambulances
         for i in eachindex(problem.available)
-            @assert problem.available[i] == length(redeploy.ambulances[i])
+            @assert problem.available[i] == length(redeploy.ambulances[i]) "$(problem.available) versus $(redeploy.ambulances)" # "$i: $(problem.available[i]), $(length(redeploy.ambulances[i]))"
         end
     end
     # @assert all(problem.available .== problem.deployment)
