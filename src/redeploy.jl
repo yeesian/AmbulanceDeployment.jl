@@ -27,6 +27,7 @@ end
 function NoRedeployModel(
         p::DeploymentProblem,
         available::Vector{Int},
+        # utilization::Vector{Float64},
         hospitals::DataFrame,
         stations::DataFrame;
         lambda::Float64 = 100.0,
@@ -79,17 +80,21 @@ function reassign_ambulances!(ems, problem::DispatchProblem, redeploy::DeployMod
         if redeploy.status[a] == :available
             redeploy.stn2stn[redeploy.assignment[a],i]
         elseif redeploy.status[a] == :responding
-            50 # + redeploy.hosp2stn[redeploy.hospital[a],i]
+            60 - (t - redeploy.fromtime[a]) # + redeploy.hosp2stn[redeploy.hospital[a],i]
         elseif redeploy.status[a] == :atscene
-            40 # + redeploy.hosp2stn[redeploy.hospital[a],i]
+            45 - (t - redeploy.fromtime[a]) # + redeploy.hosp2stn[redeploy.hospital[a],i]
         elseif redeploy.status[a] == :conveying
-            30 # + redeploy.hosp2stn[redeploy.hospital[a],i]
+            30 - (t - redeploy.fromtime[a]) # + redeploy.hosp2stn[redeploy.hospital[a],i]
         elseif redeploy.status[a] == :returning
-            15 - redeploy.fromtime[a]
+            15 - (t - redeploy.fromtime[a])
         elseif redeploy.status[a] == :redeploying
-            t - redeploy.fromtime[a]
+            5 + redeploy.stn2stn[redeploy.assignment[a],i]
         end
     
+    for a in 1:size(redeploy.w,1)
+        @assert t >= redeploy.fromtime[a]
+    end
+
     for s in redeploy.shortfall, a in 1:size(redeploy.w,1), i in 1:size(redeploy.w,2)
         chg_coeffs!(redeploy.model.internalModel.inner, [s.idx], [redeploy.w[a,i].col], [cost(a,i)/60-1])
     end
@@ -171,3 +176,53 @@ function redirected!(redeploy::DeployModel, amb::Int, t::Int)
     redeploy.status[amb] = :responding
     redeploy.fromtime[amb] = t
 end
+
+# function utilization(
+#         problem::DispatchProblem,
+#         dispatch::DispatchModel,
+#         redeploy::DeployModel;
+#         verbose::Bool=false
+#     )
+#     ems = EMSEngine(problem)
+#     # @show problem.available
+#     # @show redeploy.ambulances
+#     k = 0
+#     while !isempty(ems.eventqueue)
+#         if k > 10_000
+#             break
+#         else
+#             k += 1
+#         end
+#         (event, id, t, value) = dequeue!(ems.eventqueue)
+#         # @show (event, id, t, value)
+#         @assert t >= 0 # in case of integer overflow (when calls > ambulances)
+#         if event == :call
+#             call_event!(ems, problem, dispatch, redeploy, id, t, value, verbose=verbose)
+#         elseif event == :arrive
+#             arrive_event!(ems, problem, redeploy, id, t, value)
+#         elseif event == :convey
+#             convey_event!(ems, problem, redeploy, id, t, value)
+#         elseif event == :return
+#             return_event!(ems, problem, redeploy, id, t, value)
+#         else
+#             @assert event == :done
+#             done_event!(ems, problem, dispatch, redeploy, id, t, value)
+#         end
+#         # @show problem.available
+#         # @show redeploy.ambulances
+#         for i in eachindex(problem.available)
+#             @assert problem.available[i] == length(redeploy.ambulances[i]) "$(problem.available) versus $(redeploy.ambulances)" # "$i: $(problem.available[i]), $(length(redeploy.ambulances[i]))"
+#         end
+#     end
+#     # @assert all(problem.available .== problem.deployment)
+#     @assert all(ems.eventlog[:dispatch_from] .>= 0)
+#     df = ems.eventlog[ems.eventlog[:dispatch_from] ,!= 0,]
+
+#     nhours = 1/3600 * problem.emergency_calls[
+#         maximum(id for (i,id) in enumerate(df[:id]) if df[:dispatch_from][i] != 0),
+#         :arrival_seconds
+#     ]
+#     nrows = sum(loc == 1 for loc in df[:dispatch_from] if loc != 0)
+#     ndispatch = [sum(loc == i for loc in df[:dispatch_from] if loc != 0) for i in 1:p.nlocations]
+#     ndispatch ./ nhours # average # of calls served per hour
+# end
