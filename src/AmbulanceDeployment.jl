@@ -161,7 +161,6 @@ module AmbulanceDeployment
     function ambulance_for(model::ClosestDispatch,
                            id::Int,
                            problem::DispatchProblem; verbose=false)
-        verbose && print("*")
         i = available_for(model, id, problem)
         if i == 0
             verbose && println(problem.available)
