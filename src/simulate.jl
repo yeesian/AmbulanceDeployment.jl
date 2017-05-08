@@ -1,199 +1,197 @@
-function request_for!(problem::DispatchProblem, location::Int, t::Int)
-    @assert problem.deployment[location] > 0
-    if problem.available[location] == 0 # no ambulances available
-        problem.wait_queue[location] += 1
-        @assert length(problem.amb_queue[location]) >= 1
-        delay = problem.amb_queue[location][1] - t
-    else # ambulance available
-        problem.available[location] -= 1
-        delay = 0
-    end
-    delay
+
+type EMSEngine{T}
+    eventlog::DataFrame
+    eventqueue::PriorityQueue{T,Int,Base.Order.ForwardOrdering}
 end
 
-function returned_to!(problem::DispatchProblem, location::Int, t::Int)
-    @assert problem.deployment[location] > 0
-    @assert !isempty(problem.amb_queue[location])
-    shift!(problem.amb_queue[location]) # remove the first item from collection
-    problem.available[location] += (problem.wait_queue[location] == 0)
-    problem.wait_queue[location] -= (problem.wait_queue[location] > 0)
-end
-
-function form_queue(emergency_calls::DataFrame)
-    pq = pq = PriorityQueue{Tuple{Int,Int,Int},Int,Base.Order.ForwardOrdering}()
-    for i in 1:nrow(emergency_calls)
-        enqueue!(pq, (i, emergency_calls[i, :arrival_seconds],
-                         emergency_calls[i, :neighborhood]),
-                 emergency_calls[i, :arrival_seconds])
-    end
-    pq
-end
-
-function simulate_events!(problem::DispatchProblem,
-                          model::DispatchModel,
-                          turnaround::Distributions.LogNormal,
-                          model_name::String="model",
-                          verbose::Bool=false; mini_verbose=false)
-    
-    amb_allocation = problem.deployment # for checking of invariance properties
-    events = form_queue(problem.emergency_calls)
+function EMSEngine(problem::DispatchProblem)
     ncalls = nrow(problem.emergency_calls)
-    dispatch_col = Symbol("$(model_name)_dispatch")
-    delay_col = Symbol("$(model_name)_delay")
-    problem.emergency_calls[dispatch_col] = 0
-    problem.emergency_calls[delay_col] = 1000.0 # Inf; should be filled with smaller values after
-
-    while !isempty(events)
-        (id, t, value) = dequeue!(events)
-        if id <= ncalls # event == :call
-            i = ambulance_for(model, id, problem, verbose=mini_verbose)
-            if i == 0
-                region = problem.emergency_calls[id, :neighborhood]
-                verbose && println(amb_allocation)
-                verbose && println(vec(problem.coverage[region,:]))
-                verbose && println(amb_allocation[vec(problem.coverage[region,:])])
-                verbose && println(problem.amb_queue)
-                @assert sum(amb_allocation[vec(problem.coverage[region,:])]) == 0
-                verbose && println("       out-of-range: $((id,t,value))")
-            else
-                problem.emergency_calls[id, dispatch_col] = i
-                verbose && println("time $t: incoming emergency call from region $value")
-                verbose && println("time $t:  requesting for ambulance from location $i")
-
-                update_ambulances!(model, i, -1)
-                delay = request_for!(problem, i, t) # queue wait time if busy
-                if delay < 0
-                    verbose && println(problem.amb_queue[i])
-                    verbose && println(t)
-                    @assert delay >= 0
-                end
-                travel_time = ceil(Int,60*problem.emergency_calls[id, Symbol("stn$(i)_min")]) # include road travel time
-                delay += travel_time
-                problem.emergency_calls[id, delay_col] = delay / 60 # express in terms of minutes
-                verbose && (delay  > 0) && println("time $t:   send from $(problem.amb_queue[i])")
-                verbose && (delay == 0) && println("time $t:   ambulance dispatched from $i")
-
-                t_end = t + travel_time + ceil(Int,60*rand(turnaround)) # time the ambualnce ends service (back at base)
-                push!(problem.amb_queue[i], t_end)
-                sort!(problem.amb_queue[i]) # may not be in order
-                enqueue!(events, (id+ncalls, t_end, i), t_end)
-            end
-        else # event == :done
-            verbose && println("time $t: 1 ambulance returned to location $value")
-            returned_to!(problem, value, t)
-            update_ambulances!(model, value, 1)
-        end
-        # Sanity check
-        for i in eachindex(problem.amb_queue)
-            @assert amb_allocation[i] == problem.available[i] + length(problem.amb_queue[i]) - problem.wait_queue[i]
-        end
+    eventlog = DataFrame(
+        id = 1:ncalls,
+        dispatch_from = zeros(Int, ncalls),
+        delay = fill(Inf, ncalls),
+        hospital = zeros(Int, ncalls)
+    )
+    eventqueue = PriorityQueue{Tuple{Symbol,Int,Int,Int},Int,Base.Order.ForwardOrdering}()
+    for i in 1:nrow(problem.emergency_calls)
+        t = problem.emergency_calls[i, :arrival_seconds]
+        enqueue!(eventqueue, (:call, i, t, problem.emergency_calls[i, :neighborhood]), t)
     end
-
-    for i in eachindex(problem.amb_queue)
-        @assert isempty(problem.amb_queue[i])
-    end
-    @assert sum(problem.wait_queue) == 0
-    @assert all(problem.available .== amb_allocation)
-    # @assert all(problem.emergency_calls[dispatch_col] .> 0)
+    EMSEngine{Tuple{Symbol,Int,Int,Int}}(eventlog, eventqueue)
 end
 
-# function form_queue(emergency_calls::DataFrame)
-#     pq = PriorityQueue{(Int,Symbol,Int,Int),Int}()
-#     for i in 1:nrow(emergency_calls)
-#         enqueue!(pq, (i, :call, emergency_calls[i, :arrival_seconds], emergency_calls[i, :neighborhood]),
-#                  emergency_calls[i, :arrival_seconds])
-#     end
-#     pq
-# end
+function call_event!(
+        ems::EMSEngine,
+        problem::DispatchProblem,
+        dispatch::DispatchModel,
+        redeploy::DeployModel,
+        id::Int, # the id of the emergency call
+        t::Int, # the time of the emergency call
+        nbhd::Int; # the neighborhood the call is from
+        verbose::Bool = false
+    )
+    if sum(problem.deployment[problem.coverage[nbhd,:]]) == 0
+        verbose && println("no ambulance reachable for call at $nbhd")
+    elseif sum(problem.available[problem.coverage[nbhd,:]]) > 0
+        i = ambulance_for(dispatch, id, problem)
+        @assert i > 0 "dispatch from $i" # assume valid i (enforced by <if> condition) 
+        update_ambulances!(dispatch, i, -1)
+        ems.eventlog[id, :dispatch_from] = i
+        @assert problem.available[i] > 0
+        problem.available[i] -= 1
 
-# function random_ambulance_for(j::Int, available::Vector{Int}, coverage::BitArray{2})
-#     nlocations = size(coverage,2)
-#     available_locations = [1:nlocations][vec(coverage[j,:])]
-#     for loc in sample(available_locations,length(available_locations),replace=false)
-#         if available[loc] > 0
-#             return loc
-#         end
-#     end
-#     return 0
-# end
+        travel_time = ceil(Int, 60*problem.emergency_calls[id, Symbol("stn$(i)_min")])
+        @assert travel_time >= 0
+        ems.eventlog[id, :delay] = travel_time / 60 # minutes
+        
+        amb = respond_to!(redeploy, i, t)
+        enqueue!(ems.eventqueue, (:arrive, id, t + travel_time, amb), t + travel_time)
+    else
+        push!(problem.wait_queue[nbhd], id) # queue the emergency call
+    end
+end
 
-# function ambulance_for(model::DispatchModel,
-#                        region::Int,
-#                        problem::DispatchProblem,
-#                        coverage::BitArray{2},
-#                        verbose::Bool=false)
-#     i = available_for(region, problem.available, model)
-#     if i == 0
-#         return waiting_for(region, problem.amb_queue, problem.coverage)
-#     else
-#         update_ambulances(model, i, -1)
-#         return i
-#     end
-# end
+function arrive_event!(
+        ems::EMSEngine,
+        problem::DispatchProblem,
+        redeploy::DeployModel,
+        id::Int, # the id of the emergency call
+        t::Int, # the time of the emergency call
+        amb::Int
+    )
+    arriveatscene!(redeploy, amb, t)
+    # time the ambulance spends at the scene
+    scene_time = ceil(Int,60*0.4*rand(problem.turnaround)) # 60sec*0.4*mean(40minutes) ~ 15minutes
+    @assert scene_time > 0
+    enqueue!(ems.eventqueue, (:convey, id, t + scene_time, amb), t + scene_time)
+end
 
-# function waiting_for(j::Int, next_in_location::Vector{Vector{Int}}, coverage::BitArray{2})
-#     nlocations = length(next_in_location)
-#     earliest_time = Inf
-#     earliest_location = 0
-#     for i in 1:nlocations
-#         if !isempty(next_in_location[i]) && coverage[j,i]
-#             if next_in_location[i][1] < earliest_time
-#                 earliest_location = i
-#                 earliest_time = next_in_location[i][1]
-#             end
-#         end
-#     end
-#     @assert earliest_location != 0
-#     (earliest_location, earliest_time)
-# end
+"determine the hospital to convey the patient to (currently it's based on the closest hospital)"
+function convey_event!(
+        ems::EMSEngine,
+        problem::DispatchProblem,
+        redeploy::DeployModel,
+        id::Int, # the id of the emergency call
+        t::Int, # the time of the emergency call
+        amb::Int
+    )
+    h = let mintime = Inf, minindex = 0
+        for h in 1:nrow(problem.hospitals)
+            traveltime = problem.emergency_calls[id, Symbol("hosp$(h)_min")]
+            if !isna(traveltime) && traveltime < mintime
+                @assert traveltime >= 0
+                minindex = h; mintime = traveltime
+            end
+        end
+        minindex
+    end
+    @assert h != 0
+    redeploy.hospital[amb] = ems.eventlog[id, :hospital] = h
+    conveytime = 60*15 + ceil(Int, 60*problem.emergency_calls[id, Symbol("hosp$(h)_min")]) # ~20minutes
+    @assert conveytime >= 0 conveytime
+    conveying!(redeploy, amb, h, t)
+    enqueue!(ems.eventqueue, (:return, id, t+conveytime, amb), t+conveytime)
+end
 
-# function simulate_events(deployment::Vector{Int},
-#                          coverage::BitArray{2},
-#                          emergency_calls::DataFrame;
-#                          verbose=false)
-#     ncalls = nrow(emergency_calls)
-#     (nregions, nlocations) = size(coverage)
-#     locations = 1:nlocations
-#     regions = 1:nregions
-#     delays = (Int,Int,Int,Int)[]
-#     available = deployment[:]
-#     next_in_location = Array(Vector{Int}, nlocations)
+function return_event!(
+        ems::EMSEngine,
+        problem::DispatchProblem,
+        redeploy::DeployModel,
+        id::Int,
+        t::Int,
+        amb::Int
+    )
+    stn = returning_to!(redeploy, amb, t)
+    h = redeploy.hospital[amb]
+    returntime = ceil(Int,60*problem.hospitals[h, Symbol("stn$(stn)_min")]) # ~ 10minutes
+    @assert returntime >= 0 returntime
+    t_end = t + returntime
+    enqueue!(ems.eventqueue, (:done, id, t_end, amb), t_end)
+end
 
-#     for i in locations
-#         next_in_location[i] = Vector{Int}()
-#     end
-#     events_queue = form_queue(emergency_calls)
-#     while !isempty(events_queue)
-#         (id, event, t, value) = dequeue!(events_queue)
-#         if event == :call
-#             j = value # incoming emergency call from region j
-#             verbose && println("incoming emergency call from region $j at time $t")
-#             delay = 0
-#             i = ambulance_for(j, available, coverage)
-#             if i == 0 # no ambulances available at the moment
-#                 verbose && println("  no ambulances available for $j at time $(t)!")
-#                 (i,tnew) = next_ambulance_for(j, next_in_location, coverage)
-#                 verbose && println("  dispatching ambulance from $i, from queue $(next_in_location[i])")
-#                 shift!(next_in_location[i])
-#                 delay = tnew - t
-#                 push!(delays, (id, delay, i, j))
-#             else
-#                 verbose && println("  dispatching ambulance from $i")
-#                 available[i] -= 1
-#             end
-#             tend = t + delay + 3600
-#             enqueue!(events_queue, (id+ncalls, :done, tend, i), tend)
-#             push!(next_in_location[i], tend)
-#             verbose && println("  with $(available[i]) remaining at $i, and a queue of $(next_in_location[i]).")
-#         else
-#             @assert event == :done
-#             i = value
-#             available[i] += 1
-#             verbose && println("1 ambulance returned to location $i at time $t")
-#             if t == next_in_location[i][1]
-#                 shift!(next_in_location[i])
-#             end
-#         end
-#     end
-#     delays
-# end
+function done_event!(
+        ems::EMSEngine,
+        problem::DispatchProblem,
+        dispatch::DispatchModel,
+        redeploy::DeployModel,
+        id::Int,
+        t::Int,
+        amb::Int
+    )
+    stn = redeploy.assignment[amb]; @assert stn > 0
+    if sum(length(wq) for wq in problem.wait_queue[problem.coverage[:,stn]]) > 0
+        # people are waiting in a queue
+        redirected!(redeploy, amb, t)
+        # determine the person who has waited the longest
+        minindex = 0; mintime = Inf
+        for nbhd in 1:size(problem.coverage,1)
+            if problem.coverage[nbhd,stn] && length(problem.wait_queue[nbhd]) > 0
+                arrivaltime = problem.emergency_calls[problem.wait_queue[nbhd][1], :arrival_seconds]
+                if arrivaltime < mintime
+                    mintime = arrivaltime
+                    minindex = nbhd
+                end
+            end
+        end
+        @assert minindex != 0
+        @assert t - mintime >= 0
+        @assert 0 <= mintime < Inf
+        # respond to the person
+        let id = shift!(problem.wait_queue[minindex])
+            ems.eventlog[id, :dispatch_from] = stn
+            travel_time = ceil(Int,60*problem.emergency_calls[id, Symbol("stn$(stn)_min")])
+            @assert travel_time >= 0
+            total_delay = (t - mintime) + travel_time; @assert total_delay >= 0
+            tarrive = t + total_delay; @assert t + total_delay >= 0 "$t, $total_delay"
+            ems.eventlog[id, :delay] = total_delay / 60 # minutes
+            enqueue!(ems.eventqueue, (:arrive, id, tarrive, amb), tarrive)
+        end
+    else # returned to base location
+        returned_to!(redeploy, amb, t)
+        returned_to!(problem, stn, t)
+        update_ambulances!(dispatch, stn, 1)
+    end
+end
+
+function simulate_events!(
+        problem::DispatchProblem,
+        dispatch::DispatchModel,
+        redeploy::DeployModel;
+        verbose::Bool=false
+    )
+    ems = EMSEngine(problem)
+    # @show problem.available
+    # @show redeploy.ambulances
+    k = 0
+    while !isempty(ems.eventqueue)
+        if k > 10_000
+            break
+        else
+            k += 1
+        end
+        (event, id, t, value) = dequeue!(ems.eventqueue)
+        # @show (event, id, t, value)
+        @assert t >= 0 # in case of integer overflow (when calls > ambulances)
+        if event == :call
+            call_event!(ems, problem, dispatch, redeploy, id, t, value, verbose=verbose)
+        elseif event == :arrive
+            arrive_event!(ems, problem, redeploy, id, t, value)
+        elseif event == :convey
+            convey_event!(ems, problem, redeploy, id, t, value)
+        elseif event == :return
+            reassign_ambulances!(ems, problem, redeploy, t)
+            return_event!(ems, problem, redeploy, id, t, value)
+        else
+            @assert event == :done
+            done_event!(ems, problem, dispatch, redeploy, id, t, value)
+        end
+        # @show problem.available
+        # @show redeploy.ambulances
+        for i in eachindex(problem.available)
+            @assert problem.available[i] == length(redeploy.ambulances[i]) "$(problem.available) versus $(redeploy.ambulances)" # "$i: $(problem.available[i]), $(length(redeploy.ambulances[i]))"
+        end
+    end
+    # @assert all(problem.available .== problem.deployment)
+    @assert all(ems.eventlog[:dispatch_from] .>= 0)
+    ems.eventlog
+end
