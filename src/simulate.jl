@@ -9,7 +9,11 @@ function EMSEngine(problem::DispatchProblem)
     eventlog = DataFrame(
         id = 1:ncalls,
         dispatch_from = zeros(Int, ncalls),
-        delay = fill(Inf, ncalls),
+        waittime = fill(0.0, ncalls),
+        responsetime = fill(Inf, ncalls),
+        scenetime = fill(Inf, ncalls),
+        conveytime = fill(Inf, ncalls),
+        returntime = fill(Inf, ncalls),
         hospital = zeros(Int, ncalls)
     )
     eventqueue = PriorityQueue{Tuple{Symbol,Int,Int,Int},Int,Base.Order.ForwardOrdering}()
@@ -40,9 +44,9 @@ function call_event!(
         @assert problem.available[i] > 0
         problem.available[i] -= 1
 
-        travel_time = ceil(Int, 60*problem.emergency_calls[id, Symbol("stn$(i)_min")])
+        travel_time = ceil(Int, 60*2*problem.emergency_calls[id, Symbol("stn$(i)_min")])
         @assert travel_time >= 0
-        ems.eventlog[id, :delay] = travel_time / 60 # minutes
+        ems.eventlog[id, :responsetime] = travel_time / 60 # minutes
         
         amb = respond_to!(redeploy, i, t)
         enqueue!(ems.eventqueue, (:arrive, id, t + travel_time, amb), t + travel_time)
@@ -62,6 +66,7 @@ function arrive_event!(
     arriveatscene!(redeploy, amb, t)
     # time the ambulance spends at the scene
     scene_time = ceil(Int,60*0.4*rand(problem.turnaround)) # 60sec*0.4*mean(40minutes) ~ 15minutes
+    ems.eventlog[id, :scenetime] = scene_time / 60 # minutes
     @assert scene_time > 0
     enqueue!(ems.eventqueue, (:convey, id, t + scene_time, amb), t + scene_time)
 end
@@ -88,6 +93,7 @@ function convey_event!(
     @assert h != 0
     redeploy.hospital[amb] = ems.eventlog[id, :hospital] = h
     conveytime = 60*15 + ceil(Int, 60*problem.emergency_calls[id, Symbol("hosp$(h)_min")]) # ~20minutes
+    ems.eventlog[id, :conveytime] = conveytime / 60 # minutes
     @assert conveytime >= 0 conveytime
     conveying!(redeploy, amb, h, t)
     enqueue!(ems.eventqueue, (:return, id, t+conveytime, amb), t+conveytime)
@@ -103,7 +109,8 @@ function return_event!(
     )
     stn = returning_to!(redeploy, amb, t)
     h = redeploy.hospital[amb]
-    returntime = ceil(Int,60*problem.hospitals[h, Symbol("stn$(stn)_min")]) # ~ 10minutes
+    returntime = ceil(Int,60*2*problem.hospitals[h, Symbol("stn$(stn)_min")]) # ~ 10minutes
+    ems.eventlog[id, :returntime] = returntime / 60 # minutes
     @assert returntime >= 0 returntime
     t_end = t + returntime
     enqueue!(ems.eventqueue, (:done, id, t_end, amb), t_end)
@@ -133,17 +140,20 @@ function done_event!(
                 end
             end
         end
+        waittime = t - mintime
         @assert minindex != 0
-        @assert t - mintime >= 0
+        @assert waittime >= 0
         @assert 0 <= mintime < Inf
+
         # respond to the person
         let id = shift!(problem.wait_queue[minindex])
             ems.eventlog[id, :dispatch_from] = stn
+            ems.eventlog[id, :waittime] = waittime / 60 # minutes
             travel_time = ceil(Int,60*problem.emergency_calls[id, Symbol("stn$(stn)_min")])
+            ems.eventlog[id, :responsetime] = travel_time / 60 # minutes
             @assert travel_time >= 0
-            total_delay = (t - mintime) + travel_time; @assert total_delay >= 0
+            total_delay = waittime + travel_time; @assert total_delay >= 0
             tarrive = t + total_delay; @assert t + total_delay >= 0 "$t, $total_delay"
-            ems.eventlog[id, :delay] = total_delay / 60 # minutes
             enqueue!(ems.eventqueue, (:arrive, id, tarrive, amb), tarrive)
         end
     else # returned to base location
@@ -162,13 +172,7 @@ function simulate_events!(
     ems = EMSEngine(problem)
     # @show problem.available
     # @show redeploy.ambulances
-    k = 0
     while !isempty(ems.eventqueue)
-        if k > 10_000
-            break
-        else
-            k += 1
-        end
         (event, id, t, value) = dequeue!(ems.eventqueue)
         # @show (event, id, t, value)
         @assert t >= 0 # in case of integer overflow (when calls > ambulances)
@@ -179,14 +183,16 @@ function simulate_events!(
         elseif event == :convey
             convey_event!(ems, problem, redeploy, id, t, value)
         elseif event == :return
+            # @show problem.available
+            # @show redeploy.ambulances
+            # @show redeploy.assignment
             reassign_ambulances!(ems, problem, redeploy, t)
+            # println("obj: ", JuMP.getvalue(redeploy.obj1), ", ", JuMP.getvalue(redeploy.obj2))
             return_event!(ems, problem, redeploy, id, t, value)
         else
             @assert event == :done
             done_event!(ems, problem, dispatch, redeploy, id, t, value)
         end
-        # @show problem.available
-        # @show redeploy.ambulances
         for i in eachindex(problem.available)
             @assert problem.available[i] == length(redeploy.ambulances[i]) "$(problem.available) versus $(redeploy.ambulances)" # "$i: $(problem.available[i]), $(length(redeploy.ambulances[i]))"
         end
