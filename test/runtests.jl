@@ -1,5 +1,7 @@
 using AmbulanceDeployment, DataFrames, Winston, JLD
 
+ncalls = 10000
+
 hourly_calls = DataFrames.readtable("data/processed/2-weekday_calls.csv")
 # weekend_hourly_calls = DataFrames.readtable("data/processed/2-weekend_calls.csv")
 adjacent_nbhd = DataFrames.readtable("data/processed/2-adjacent_nbhd.csv")
@@ -50,7 +52,7 @@ inc_train_filter = (calls[:year] .== 2012) .* (calls[:month] .<= 3)
 inc_test_filter  = !inc_train_filter
 
 inc_train_indices = inc_indices[inc_train_filter]
-inc_test_indices = inc_indices[inc_test_filter];
+inc_test_indices = inc_indices[inc_test_filter][1:ncalls];
 
 # we distinguish between peak and offpeak hours
 
@@ -85,49 +87,56 @@ const steady_turnard = Distributions.LogNormal(3.69, 0.1)
 const stn_names = [Symbol("stn$(i)_min") for i in 1:size(p.coverage,2)];
 
 # overall simulation
-@time begin
-    p = DeploymentProblem(30, length(locations), length(regions), demand, indices[train_filter],
-                          indices[test_filter], coverage[regions,:], Array{Bool,2}(adjacent))
-    for turnaround in (turnard,)
-        problem = DispatchProblem(calls[inc_test_indices,:], hospitals, stations, p.coverage, turnaround)
-        closestdispatch = ClosestDispatch(p, problem.emergency_calls[:, stn_names])
-        problem.emergency_calls[:arrival_seconds] = cumsum(problem.emergency_calls[:interarrival_seconds]);
-        for name in model_names
-            print(name, ": ")
-            for namb in 30:5:50 # 10:5:20 #50
-                print(namb, " (")
-                for lambda in (0.0, 100.0, 1000.0, 10_000.0, 100_000.0)
-                    print(lambda, " ")
-                    x = amb_deployment[name][namb]
-                    p.nambulances = namb
-                    initialize!(problem, x)
-                    noredeploy = NoRedeployModel(p, x, hospitals, stations, lambda=lambda)
-                    srand(1234) # reset seed
-                    @time df = simulate_events!(problem, closestdispatch, noredeploy)
-                    DataFrames.writetable("$(name)_n$(namb)_lambda$(Int(lambda)).csv", df)
-                end
-                println(") ")
-            end
-        end
-        #DataFrames.writetable("data/processed/4-overall_simulation.csv", problem.emergency_calls)
-    end
-end
+# @time begin
+#     p = DeploymentProblem(30, length(locations), length(regions), demand, indices[train_filter],
+#                           indices[test_filter], coverage[regions,:], Array{Bool,2}(adjacent))
+#     for turnaround in (turnard,)
+#         problem = DispatchProblem(calls[inc_test_indices,:], hospitals, stations, p.coverage, turnaround)
+#         closestdispatch = ClosestDispatch(p, problem.emergency_calls[:, stn_names])
+#         problem.emergency_calls[:arrival_seconds] = cumsum(problem.emergency_calls[:interarrival_seconds]);
+#         for name in model_names
+#             println(name, ": ")
+#             for namb in 30:5:50 # 10:5:20 #50
+#                 print("  ", namb, " (")
+#                 for lambda in 0:10
+#                     print(lambda, " ")
+#                     x = amb_deployment[name][namb]
+#                     p.nambulances = namb
+#                     initialize!(problem, x)
+#                     noredeploy = NoRedeployModel(
+#                         p,
+#                         x,
+#                         hospitals,
+#                         stations,
+#                         lambda=Float64(lambda)
+#                     )
+#                     srand(1234) # reset seed
+#                     df = simulate_events!(problem, closestdispatch, noredeploy)
+#                     DataFrames.writetable("$(name)_n$(namb)_lambda$(lambda).csv", df)
+#                 end
+#                 println(")")
+#             end
+#         end
+#         #DataFrames.writetable("data/processed/4-overall_simulation.csv", problem.emergency_calls)
+#     end
+# end
 
 
-# p = DeploymentProblem(30, length(locations), length(regions), demand, indices[train_filter],
-#                                   indices[test_filter], coverage[regions,:], Array{Bool,2}(adjacent))
-# turnaround = turnard
-# problem = DispatchProblem(calls[inc_test_indices,:], hospitals, stations, p.coverage, turnaround)
-# dispatch = ClosestDispatch(p, problem.emergency_calls[:, stn_names])
-# problem.emergency_calls[:arrival_seconds] = cumsum(problem.emergency_calls[:interarrival_seconds]);
-# name = model_names[1]
-# namb = 35
-# x = amb_deployment[name][namb]
-# p.nambulances = namb
-# initialize!(problem, x)
-# redeploy = NoRedeployModel(p, x, hospitals, stations)
-# srand(1234) # reset seed
-# simulate_events!(problem, dispatch, redeploy)
+p = DeploymentProblem(30, length(locations), length(regions), demand, indices[train_filter],
+                                  indices[test_filter], coverage[regions,:], Array{Bool,2}(adjacent))
+turnaround = turnard
+problem = DispatchProblem(calls[inc_test_indices,:], hospitals, stations, p.coverage, turnaround)
+dispatch = ClosestDispatch(p, problem.emergency_calls[:, stn_names])
+problem.emergency_calls[:arrival_seconds] = cumsum(problem.emergency_calls[:interarrival_seconds]);
+name = model_names[1]
+namb = 30
+lambda = 0
+x = amb_deployment[name][namb]
+p.nambulances = namb
+initialize!(problem, x)
+redeploy = NoRedeployModel(p, x, hospitals, stations, lambda=Float64(lambda))
+srand(1234) # reset seed
+@time df = simulate_events!(problem, dispatch, redeploy)
 
 
 
