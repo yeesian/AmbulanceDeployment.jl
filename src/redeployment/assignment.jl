@@ -107,6 +107,16 @@ function reassign_ambulances!(ems, problem::DispatchProblem, redeploy::Assignmen
             10 - (t - redeploy.fromtime[a])/60 + redeploy.stn2stn[redeploy.assignment[a],i]
         end
     # (1) Optimize Dynamic Assignment Problem
+    # (1i) change RHS to account for wait_queue
+    nwait = [length(problem.wait_queue[nbhd]) for nbhd in 1:size(problem.coverage,1)]
+    Gurobi.set_dblattrarray!(redeploy.model, "RHS", 1, nlocations, [
+        Float64(problem.deployment[i] + sum(
+            nwait[nbhd] for nbhd in 1:size(problem.coverage,1)
+            if problem.coverage[nbhd,i]
+        ))
+        for i in 1:nlocations
+    ])
+    # (1ii) change coeffs to account for traveling time
     let con = Cint[0], ind = Cint[0], val = Float64[0.0]
         for i in 1:nlocations, a in 1:nambulances
             # JuMP.setRHS(s, problem.deployment[loc] + length(problem.wait_queue[loc])) # include backlog from wait_queue
