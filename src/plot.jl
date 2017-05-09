@@ -1,3 +1,11 @@
+import Gadfly: lab_gradient
+import GeoInterface: coordinates
+import GeoConverters: composeform
+import Winston: FramedPlot, Curve, Legend, setattr, add
+import Colors: LCHab, Colorant
+import Compose: Polygon, UnitBox, context, compose, linewidth
+import Compose: stroke, fill, mm, circle
+
 function convergence_plot(robust_model::RobustDeployment)
     fp = FramedPlot(title="Bounds", xlabel="iteration", ylabel="shortfall")
     n = length(robust_model.upperbounds)

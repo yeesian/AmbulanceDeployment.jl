@@ -1,6 +1,6 @@
 using AmbulanceDeployment, DataFrames, Winston, JLD
 
-ncalls = 10000
+ncalls = 1000
 
 hourly_calls = DataFrames.readtable("data/processed/2-weekday_calls.csv")
 # weekend_hourly_calls = DataFrames.readtable("data/processed/2-weekend_calls.csv")
@@ -134,7 +134,7 @@ lambda = 0
 x = amb_deployment[name][namb]
 p.nambulances = namb
 initialize!(problem, x)
-redeploy = NoRedeployModel(p, x, hospitals, stations, lambda=Float64(lambda))
+redeploy = AssignmentModel(p, x, hospitals, stations, lambda=Float64(lambda))
 srand(1234) # reset seed
 @time df = simulate_events!(problem, dispatch, redeploy)
 
