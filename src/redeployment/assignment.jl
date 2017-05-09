@@ -1,11 +1,4 @@
-abstract DeployModel
-    # Interface
-    # =========
-    # assignment::Vector{Int} # which location the ambulance is assigned to
-    # status::Vector{Int} # the current status of the ambulance
-    # fromtime::Vector{Int} # the time it started the new status
-
-type NoRedeployModel <: DeployModel
+type AssignmentModel <: RedeployModel
     model::Gurobi.Model
     lambda::Float64
 
@@ -22,7 +15,7 @@ type NoRedeployModel <: DeployModel
     soln::Vector{Float64} # buffer for storing dynamic assignment solutions
 end
 
-function NoRedeployModel(
+function AssignmentModel(
         p::DeploymentProblem,
         available::Vector{Int},
         # utilization::Vector{Float64},
@@ -89,11 +82,11 @@ function NoRedeployModel(
         Gurobi.add_constr!(m, inds, [1., 1.], '>', Float64(assignment[a] == i))
     end
 
-    NoRedeployModel(m, lambda, hosp2stn, stn2stn, assignment, ambulances,
+    AssignmentModel(m, lambda, hosp2stn, stn2stn, assignment, ambulances,
                     status, fromtime, hospital, zeros(nambulances*nlocations))
 end
 
-function reassign_ambulances!(ems, problem::DispatchProblem, redeploy::DeployModel, t::Int)
+function reassign_ambulances!(ems, problem::DispatchProblem, redeploy::AssignmentModel, t::Int)
     nlocations = length(redeploy.ambulances)
     nambulances = length(redeploy.assignment)
     # DEBUG
@@ -147,115 +140,3 @@ function reassign_ambulances!(ems, problem::DispatchProblem, redeploy::DeployMod
         end
     end
 end
-
-function respond_to!(redeploy::DeployModel, i::Int, t::Int)
-    @assert length(redeploy.ambulances[i]) > 0 "$i: $(redeploy.ambulances[i])"
-    amb = shift!(redeploy.ambulances[i])
-    # @assert redeploy.hospital[amb] == 0
-    @assert amb != 0
-    @assert redeploy.status[amb] == :available "$amb: $(redeploy.status[amb])"
-    redeploy.status[amb] = :responding
-    redeploy.fromtime[amb] = t
-    amb
-end
-
-function arriveatscene!(redeploy::DeployModel, amb::Int, t::Int)
-    @assert redeploy.status[amb] == :responding "$amb: $(redeploy.status[amb])"
-    @assert redeploy.hospital[amb] == 0
-    redeploy.status[amb] = :atscene
-    redeploy.fromtime[amb] = t
-end
-
-function conveying!(redeploy::DeployModel, amb::Int, hosp::Int, t::Int)
-    @assert redeploy.status[amb] == :atscene "$amb: $(redeploy.status[amb])"
-    @assert redeploy.hospital[amb] != 0
-    redeploy.status[amb] = :conveying
-    redeploy.fromtime[amb] = t
-    redeploy.hospital[amb] = hosp
-end
-
-function returning_to!(redeploy::DeployModel, amb::Int, t::Int)
-    @assert redeploy.status[amb] == :conveying "$amb: $(redeploy.status[amb])"
-    @assert redeploy.hospital[amb] != 0
-    redeploy.status[amb] = :returning
-    redeploy.fromtime[amb] = t
-    redeploy.assignment[amb]
-end
-
-function redeploying_to!(redeploy::DeployModel, amb::Int, i::Int, t::Int)
-    # DEBUG: println("redeploying amb $amb from $(redeploy.assignment[amb]) to $i")
-    ambulances = redeploy.ambulances[redeploy.assignment[amb]]
-    @assert !in(amb, redeploy.ambulances[i])
-    @assert in(amb, ambulances)
-    deleteat!(ambulances, findfirst(ambulances, amb))
-    @assert !in(amb, ambulances)
-    redeploy.assignment[amb] = i
-    redeploy.status[amb] = :redeploying
-    redeploy.fromtime[amb] = t
-end
-
-function returned_to!(redeploy::DeployModel, amb::Int, t::Int)
-    @assert in(redeploy.status[amb], (:returning, :redeploying)) "$amb: $(redeploy.status[amb])"
-    redeploy.hospital[amb] = 0
-    redeploy.status[amb] = :available
-    redeploy.fromtime[amb] = t
-    @assert !in(amb, redeploy.ambulances[redeploy.assignment[amb]])
-    push!(redeploy.ambulances[redeploy.assignment[amb]], amb)
-end
-
-function redirected!(redeploy::DeployModel, amb::Int, t::Int)
-    @assert in(redeploy.status[amb], (:returning, :redeploying)) "$amb: $(redeploy.status[amb])"
-    redeploy.hospital[amb] = 0
-    redeploy.status[amb] = :responding
-    redeploy.fromtime[amb] = t
-end
-
-# function utilization(
-#         problem::DispatchProblem,
-#         dispatch::DispatchModel,
-#         redeploy::DeployModel;
-#         verbose::Bool=false
-#     )
-#     ems = EMSEngine(problem)
-#     # @show problem.available
-#     # @show redeploy.ambulances
-#     k = 0
-#     while !isempty(ems.eventqueue)
-#         if k > 10_000
-#             break
-#         else
-#             k += 1
-#         end
-#         (event, id, t, value) = dequeue!(ems.eventqueue)
-#         # @show (event, id, t, value)
-#         @assert t >= 0 # in case of integer overflow (when calls > ambulances)
-#         if event == :call
-#             call_event!(ems, problem, dispatch, redeploy, id, t, value, verbose=verbose)
-#         elseif event == :arrive
-#             arrive_event!(ems, problem, redeploy, id, t, value)
-#         elseif event == :convey
-#             convey_event!(ems, problem, redeploy, id, t, value)
-#         elseif event == :return
-#             return_event!(ems, problem, redeploy, id, t, value)
-#         else
-#             @assert event == :done
-#             done_event!(ems, problem, dispatch, redeploy, id, t, value)
-#         end
-#         # @show problem.available
-#         # @show redeploy.ambulances
-#         for i in eachindex(problem.available)
-#             @assert problem.available[i] == length(redeploy.ambulances[i]) "$(problem.available) versus $(redeploy.ambulances)" # "$i: $(problem.available[i]), $(length(redeploy.ambulances[i]))"
-#         end
-#     end
-#     # @assert all(problem.available .== problem.deployment)
-#     @assert all(ems.eventlog[:dispatch_from] .>= 0)
-#     df = ems.eventlog[ems.eventlog[:dispatch_from] ,!= 0,]
-
-#     nhours = 1/3600 * problem.emergency_calls[
-#         maximum(id for (i,id) in enumerate(df[:id]) if df[:dispatch_from][i] != 0),
-#         :arrival_seconds
-#     ]
-#     nrows = sum(loc == 1 for loc in df[:dispatch_from] if loc != 0)
-#     ndispatch = [sum(loc == i for loc in df[:dispatch_from] if loc != 0) for i in 1:p.nlocations]
-#     ndispatch ./ nhours # average # of calls served per hour
-# end

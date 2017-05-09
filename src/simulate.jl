@@ -28,7 +28,7 @@ function call_event!(
         ems::EMSEngine,
         problem::DispatchProblem,
         dispatch::DispatchModel,
-        redeploy::DeployModel,
+        redeploy::RedeployModel,
         id::Int, # the id of the emergency call
         t::Int, # the time of the emergency call
         nbhd::Int; # the neighborhood the call is from
@@ -58,7 +58,7 @@ end
 function arrive_event!(
         ems::EMSEngine,
         problem::DispatchProblem,
-        redeploy::DeployModel,
+        redeploy::RedeployModel,
         id::Int, # the id of the emergency call
         t::Int, # the time of the emergency call
         amb::Int
@@ -75,7 +75,7 @@ end
 function convey_event!(
         ems::EMSEngine,
         problem::DispatchProblem,
-        redeploy::DeployModel,
+        redeploy::RedeployModel,
         id::Int, # the id of the emergency call
         t::Int, # the time of the emergency call
         amb::Int
@@ -102,7 +102,7 @@ end
 function return_event!(
         ems::EMSEngine,
         problem::DispatchProblem,
-        redeploy::DeployModel,
+        redeploy::RedeployModel,
         id::Int,
         t::Int,
         amb::Int
@@ -120,7 +120,7 @@ function done_event!(
         ems::EMSEngine,
         problem::DispatchProblem,
         dispatch::DispatchModel,
-        redeploy::DeployModel,
+        redeploy::RedeployModel,
         id::Int,
         t::Int,
         amb::Int
@@ -166,7 +166,7 @@ end
 function simulate_events!(
         problem::DispatchProblem,
         dispatch::DispatchModel,
-        redeploy::DeployModel;
+        redeploy::RedeployModel;
         verbose::Bool=false
     )
     ems = EMSEngine(problem)
