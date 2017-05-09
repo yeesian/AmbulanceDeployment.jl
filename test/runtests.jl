@@ -121,7 +121,6 @@ const stn_names = [Symbol("stn$(i)_min") for i in 1:size(p.coverage,2)];
 #     end
 # end
 
-
 p = DeploymentProblem(30, length(locations), length(regions), demand, indices[train_filter],
                                   indices[test_filter], coverage[regions,:], Array{Bool,2}(adjacent))
 turnaround = turnard
@@ -137,28 +136,3 @@ initialize!(problem, x)
 redeploy = AssignmentModel(p, x, hospitals, stations, lambda=Float64(lambda))
 srand(1234) # reset seed
 @time df = simulate_events!(problem, dispatch, redeploy)
-
-
-
-# dispatch = closestdispatch
-# redeploy = noredeploy
-# ems = AmbulanceDeployment.EMSEngine(problem)
-# import Base.Collections: PriorityQueue, enqueue!, dequeue!
-
-# (event, id, t, value) = dequeue!(ems.eventqueue)
-
-# runevent(event) =
-# if event == :call
-#     AmbulanceDeployment.call_event!(ems, problem, dispatch, redeploy, id, t, value)
-# elseif event == :arrive
-#     AmbulanceDeployment.arrive_event!(ems, problem, redeploy, id, t, value)
-# elseif event == :convey
-#     AmbulanceDeployment.convey_event!(ems, problem, redeploy, id, t, value)
-# elseif event == :return
-#     AmbulanceDeployment.reassign_ambulances!(problem, redeploy)
-#     AmbulanceDeployment.return_event!(ems, problem, redeploy, id, t, value)
-# else
-#     @assert event == :done
-#     AmbulanceDeployment.done_event!(ems, problem, dispatch, redeploy, id, t, value)
-# end;
-# simulate_events!(problem, closestdispatch, noredeploy)
