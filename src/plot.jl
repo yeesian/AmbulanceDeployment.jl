@@ -19,7 +19,11 @@ function convergence_plot(robust_model::RobustDeployment)
 end
 
 function plot_timings(results:: Matrix{Result})
-    fp = Winston.FramedPlot(title="Solve Time (Robust)", xlabel="Number of Ambulances", ylabel="runtime (seconds)")
+    fp = Winston.FramedPlot(
+        title="Solve Time (Robust)",
+        xlabel="Number of Ambulances",
+        ylabel="runtime (seconds)"
+    )
     α₁ = Curve(25:5:45, Float64[results[i,1].robust_timing for i=1:5], color="yellow")
     setattr(α₁, label="α=0.1")
     α₂ = Curve(25:5:45, Float64[results[i,2].robust_timing for i=1:5], color="orange")
@@ -35,7 +39,12 @@ function plot_timings(results:: Matrix{Result})
     fp
 end
 
-function compose_neighborhoods(df::DataFrame,colname::Symbol; fill_color::AbstractString = "blue", stroke_color::AbstractString = "black")
+function compose_neighborhoods(
+        df::DataFrame,
+        colname::Symbol;
+        fill_color::AbstractString = "blue",
+        stroke_color::AbstractString = "black"
+    )
     dims = UnitBox(-77.116634,38.99596,0.207479,-0.19287) # WashingtonDC
     template = context(units=dims)
     c = template
@@ -45,12 +54,23 @@ function compose_neighborhoods(df::DataFrame,colname::Symbol; fill_color::Abstra
     for (row,p) in enumerate(df[:geometry])
         v = Float64(isna(df[row,colname]) ? 0.0 : df[row,colname])
         proportion = (v-minv)/(maxv-minv)
-        c = compose(c,compose(template, composeform(p), linewidth(0.05mm), stroke(parse(Colorant, stroke_color)), fill(grad(proportion))))
+        c = compose(c,compose(
+            template,
+            composeform(p),
+            linewidth(0.05mm),
+            stroke(parse(Colorant, stroke_color)),
+            fill(grad(proportion))
+        ))
     end
     c
 end
 
-function compose_neighborhoods{T <: Real}(df::DataFrame, values::Vector{T}; fill_color::AbstractString = "blue", stroke_color::AbstractString = "black")
+function compose_neighborhoods{T <: Real}(
+        df::DataFrame,
+        values::Vector{T};
+        fill_color::AbstractString = "blue",
+        stroke_color::AbstractString = "black"
+    )
     dims = UnitBox(-77.116634,38.99596,0.207479,-0.19287) # WashingtonDC
     template = context(units=dims)
     c = template
@@ -60,35 +80,71 @@ function compose_neighborhoods{T <: Real}(df::DataFrame, values::Vector{T}; fill
     for (row,p) in enumerate(df[:geometry])
         v = values[row]
         proportion = (v-minv)/(maxv-minv)
-        c = compose(c,compose(template, composeform(p), linewidth(0.05mm), stroke(parse(Colorant, stroke_color)), fill(grad(proportion))))
+        c = compose(c,compose(
+            template,
+            composeform(p),
+            linewidth(0.05mm),
+            stroke(parse(Colorant, stroke_color)),
+            fill(grad(proportion))
+        ))
     end
     c
 end
 
-function compose_neighborhoods_nominal{T <: Real}(df::DataFrame, values::Vector{T}; fill_color::AbstractString = "blue", stroke_color::AbstractString = "black")
+function compose_neighborhoods_nominal{T <: Real}(
+        df::DataFrame,
+        values::Vector{T};
+        fill_color::AbstractString = "blue",
+        stroke_color::AbstractString = "black"
+    )
     dims = UnitBox(-77.116634,38.99596,0.207479,-0.19287) # WashingtonDC
     template = context(units=dims)
     c = template
     grad = lab_gradient(parse(Colorant, "white"),parse(Colorant, fill_color))
     for (row,p) in enumerate(df[:geometry])
-        c = compose(c,compose(template, composeform(p), linewidth(0.05mm), stroke(parse(Colorant, stroke_color)), fill(grad(values[row]))))
+        c = compose(c, compose(
+            template,
+            composeform(p),
+            linewidth(0.05mm),
+            stroke(parse(Colorant, stroke_color)),
+            fill(grad(values[row]))
+        ))
     end
     c
 end
 
-function compose_locations(df::DataFrame; nambs=[0.001], fill_color=LCHab(78, 84, 29))
+function compose_locations(
+        df::DataFrame;
+        nambs=[0.001],
+        fill_color=LCHab(78, 84, 29)
+    )
     template = context(units=UnitBox(-77.116634,38.99596,0.207479,-0.19287)) # WashingtonDC
-    compose(template, compose( template,
-                               circle([coordinates(p)[1] for p in df[:geometry]],
-                                      [coordinates(p)[2] for p in df[:geometry]], nambs),
-                               fill(fill_color)))
+    compose(template, compose(
+        template,
+        circle([coordinates(p)[1] for p in df[:geometry]],
+               [coordinates(p)[2] for p in df[:geometry]], nambs),
+        fill(fill_color)
+    ))
 end
 
-function compose_chloropleth{T <: Real}(location_df::DataFrame, region_df::DataFrame, values::Vector{T}, regions::Vector{Int}; nambs = [1], fill_color::AbstractString = "blue" ,stroke_color::AbstractString = "black")
+function compose_chloropleth{T <: Real}(
+        location_df::DataFrame,
+        region_df::DataFrame,
+        values::Vector{T},
+        regions::Vector{Int};
+        nambs = [1],
+        fill_color::AbstractString = "blue",
+        stroke_color::AbstractString = "black"
+    )
     result = zeros(217)
     result[regions] = values
     location_c = compose_locations(location_df, nambs=sqrt(nambs)*0.0015)
-    region_c = compose_neighborhoods(region_df, result, fill_color=fill_color, stroke_color=stroke_color)
+    region_c = compose_neighborhoods(
+        region_df,
+        result,
+        fill_color=fill_color,
+        stroke_color=stroke_color
+    )
     compose(location_c, region_c)
 end
 

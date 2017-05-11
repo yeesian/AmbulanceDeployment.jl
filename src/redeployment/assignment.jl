@@ -28,8 +28,12 @@ function AssignmentModel(
     nlocations = length(available)
     assignment = zeros(Int, nambulances)
 
-    hosp2stn = convert(Matrix{Float64}, hcat([hospitals[Symbol("stn$(i)_min")] for i in 1:nlocations]...))
-    stn2stn =  convert(Matrix{Float64}, hcat([stations[Symbol("stn$(i)_min")] for i in 1:nlocations]...))
+    hosp2stn = convert(Matrix{Float64},
+        hcat([hospitals[Symbol("stn$(i)_min")] for i in 1:nlocations]...)
+    )
+    stn2stn =  convert(Matrix{Float64},
+        hcat([stations[Symbol("stn$(i)_min")] for i in 1:nlocations]...)
+    )
 
     k = 1
     ambulances = [Int[] for i in 1:nlocations]
@@ -86,7 +90,12 @@ function AssignmentModel(
                     status, fromtime, hospital, zeros(nambulances*nlocations))
 end
 
-function reassign_ambulances!(ems, problem::DispatchProblem, redeploy::AssignmentModel, t::Int)
+function reassign_ambulances!(
+        ems,
+        problem::DispatchProblem,
+        redeploy::AssignmentModel,
+        t::Int
+    )
     nlocations = length(redeploy.ambulances)
     nambulances = length(redeploy.assignment)
     # DEBUG

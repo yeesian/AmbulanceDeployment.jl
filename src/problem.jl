@@ -10,10 +10,10 @@ type DeploymentProblem{ IM <: AbstractMatrix{Int},
     adjacency::BM   # nregion x nregion
 end
 
-function DeploymentProblem(
-        hourly_calls,
-        adjacent_nbhd,
-        coverage;
+function DeploymentProblem{BM}(
+        hourly_calls::DataFrame,
+        adjacent_nbhd::DataFrame,
+        coverage::BM;
         namb = 30,
         train_filter = (hourly_calls[:year] .== 2012) .* (hourly_calls[:month] .<= 3)
     )
@@ -42,7 +42,7 @@ function naive_solution(p::DeploymentProblem)
     # evenly distribute the ambulances over all the locations
     x = zeros(Int, p.nlocations)
     for i in 0:p.nambulances-1
-        x[1+ (i % p.nlocations)] += 1
+        x[1 + (i % p.nlocations)] += 1
     end
     x
 end
@@ -66,8 +66,7 @@ type DispatchProblem
         new(emergency_data, hospitals, stations, coverage, turnaround)
 end
 
-function initialize!(problem::DispatchProblem,
-                     deployment::Vector{Int})
+function initialize!(problem::DispatchProblem, deployment::Vector{Int})
     problem.wait_queue = [Int[] for i in 1:size(problem.coverage,1)]
     problem.available = copy(deployment)
     problem.deployment = deepcopy(deployment)
