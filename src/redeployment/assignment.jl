@@ -55,21 +55,25 @@ function AssignmentModel(
         Gurobi.add_bvar!(m, 0.)
     end
     for i in 1:nlocations # eta1
-        Gurobi.add_cvar!(m, 1., 0., Inf)
+        Gurobi.add_cvar!(m, 0., -Inf, Inf)
     end
     for a in 1:nambulances, i in 1:nlocations # eta2 variables
         Gurobi.add_cvar!(m, lambda, 0., Inf)
     end
+    for i in 1:nlocations # eta3 := eta1^2
+        Gurobi.add_cvar!(m, 1., 0., Inf)
+    end
 
-    # η >= available[i] - sum(w[a,i] for a in 1:nambulances)
+    # η₁[i] >= available[i] - sum(w[a,i] for a in 1:nambulances)
     #     reformulated to
-    # sum(w[a,i] for a in 1:nambulances) + η >= available[i]
+    # sum(w[a,i] for a in 1:nambulances) + η₁[i] >= available[i]
     for i in 1:nlocations
         Gurobi.add_constr!(m,
             [((1:nambulances)-1)*nlocations+i; nambulances*nlocations + i], # inds
             ones(nambulances + 1), # coeffs
             '>', Float64(available[i]))
     end
+
     # sum(w[a,i] for i in 1:nlocations) == 1       [a=1:nambulances]
     for a in 1:nambulances
         Gurobi.add_constr!(m,
@@ -79,11 +83,36 @@ function AssignmentModel(
     end
 
     # eta2[a,i] >= |w[a,i] - (assignment[a] == i)|   [a=1:nambulances, i=1:nlocations]
+    #     reformulated to
+    # eta2[a,i] >= w[a,i] - (assignment[a] == i)   i.e. eta2[a,i] - w[a,i] >= -(assignment[a] == i)
+    # eta2[a,i] >= - w[a,i] + (assignment[a] == i) i.e. eta2[a,i] + w[a,i] >=  (assignment[a] == i)
     for a in 1:nambulances, i in 1:nlocations
         offset = (a-1)*nlocations + i
         inds = [(nambulances+1)*nlocations + offset, offset]
         Gurobi.add_constr!(m, inds, [1., -1.], '>', - Float64(assignment[a] == i))
         Gurobi.add_constr!(m, inds, [1., 1.], '>', Float64(assignment[a] == i))
+    end
+
+    # eta3[i] = eta1[i]^2
+    #     reformulated into
+    # eta3[i] >= 0
+    # eta3[i] >= 1 + 2*eta1[i]
+    # eta3[i] >= 4 + 4*eta1[i]
+    # eta3[i] >= 9 + 6*eta1[i]
+    # ...
+    for i in 1:nlocations
+        for k in 0.1:0.1:0.9
+            Gurobi.add_constr!(m,
+                [2*nambulances*nlocations + nlocations + i, nambulances*nlocations + i], # inds
+                [1., -2*k], # coeffs
+                '>', Float64(k^2))
+        end
+        for k in 1:3
+            Gurobi.add_constr!(m,
+                [2*nambulances*nlocations + nlocations + i, nambulances*nlocations + i], # inds
+                [1., -Float64(2*k)], # coeffs
+                '>', Float64(k^2))
+        end
     end
 
     AssignmentModel(m, lambda, hosp2stn, stn2stn, assignment, ambulances,
@@ -103,7 +132,7 @@ function reassign_ambulances!(
     #     @assert t >= redeploy.fromtime[a]
     # end
     cost(a,i) = if redeploy.status[a] == :available
-            0 + redeploy.stn2stn[redeploy.assignment[a],i]
+             0                                 + redeploy.stn2stn[redeploy.assignment[a],i]
         elseif redeploy.status[a] == :responding
             55 - (t - redeploy.fromtime[a])/60 + redeploy.stn2stn[redeploy.assignment[a],i] # + redeploy.hosp2stn[redeploy.hospital[a],i]
         elseif redeploy.status[a] == :atscene
@@ -127,32 +156,40 @@ function reassign_ambulances!(
     ])
     # (1ii) change coeffs to account for traveling time
     let con = Cint[0], ind = Cint[0], val = Float64[0.0]
-        for i in 1:nlocations, a in 1:nambulances
-            # JuMP.setRHS(s, problem.deployment[loc] + length(problem.wait_queue[loc])) # include backlog from wait_queue
+        for i in 1:nlocations
             con[1] = i
-            ind[1] = (a-1)*nlocations + i
-            val[1] = 1-max(min(60,cost(a,i)),0)/60
-            Gurobi.chg_coeffs!(redeploy.model, con, ind, val)
+            for a in 1:nambulances
+                ind[1] = (a-1)*nlocations + i
+                val[1] = 1-max(min(60,cost(a,i)),0)/45
+                Gurobi.chg_coeffs!(redeploy.model, con, ind, val)
+            end
         end
     end
     Gurobi.update_model!(redeploy.model)
     Gurobi.optimize(redeploy.model)
     # @show Gurobi.get_objval(redeploy.model)
 
-    # (2) Reassign ambulances based on JuMP.getvalue(redeploy.w)
+    # (2) Reassign ambulances based on optimal solution
     Gurobi.get_dblattrarray!(redeploy.soln, redeploy.model, "X", 1)
-    # @show [(1-max(min(60,cost(a,i)),0)/60)*soln[redeploy.w[a,i].col] for a in 1:size(redeploy.w,1), i in 1:size(redeploy.w,2)]
     for a in 1:nambulances
-        if redeploy.status[a] == :available
+        let stn = redeploy.assignment[a]
             for i in 1:nlocations
-                let stn = redeploy.assignment[a]
+                if stn != i && redeploy.soln[(a-1)*nlocations + i] > 0.5
                     # redeploy an existing ambulance
-                    if stn != i && redeploy.soln[(a-1)*nlocations + i] > 0.5
+                    if redeploy.status[a] == :available
                         @assert problem.available[redeploy.assignment[a]] > 0
                         problem.available[stn] -= 1
                         t_end = t + ceil(Int, 0*60*redeploy.stn2stn[stn,i])
                         redeploying_to!(redeploy, a, i, t)
                         enqueue!(ems.eventqueue, (:done, 0, t_end, a), t_end)
+                    else
+                        println("redeploying amb $a from $(redeploy.assignment[a]) to $i")
+                        ambulances = redeploy.ambulances[redeploy.assignment[a]]
+                        @assert !in(a, redeploy.ambulances[i])
+                        @assert !in(a, ambulances)
+                        in(a, ambulances) && deleteat!(ambulances, findfirst(ambulances, a))
+                        @assert !in(a, ambulances)
+                        redeploy.assignment[a] = i
                     end
                 end
             end
