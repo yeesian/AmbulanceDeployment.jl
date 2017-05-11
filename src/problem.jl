@@ -10,6 +10,34 @@ type DeploymentProblem{ IM <: AbstractMatrix{Int},
     adjacency::BM   # nregion x nregion
 end
 
+function DeploymentProblem(
+        hourly_calls,
+        adjacent_nbhd,
+        coverage;
+        namb = 30,
+        train_filter = (hourly_calls[:year] .== 2012) .* (hourly_calls[:month] .<= 3)
+    )
+    regions = Int[parse(Int,string(x)[2:end]) for x in names(hourly_calls[5:end])]
+    locations = collect(1:size(coverage,2))
+    adjacent = convert(Array, adjacent_nbhd[2:end])[regions,regions] .> 0.5
+    demand = convert(Array,hourly_calls[:,5:end])
+
+    indices = 1:nrow(hourly_calls)
+    train_indices = indices[train_filter]
+    test_indices = indices[!train_filter]
+
+    DeploymentProblem(
+        namb,
+        length(locations),
+        length(regions),
+        demand,
+        train_indices,
+        test_indices,
+        coverage[regions,:],
+        Array{Bool,2}(adjacent)
+    )
+end
+
 function naive_solution(p::DeploymentProblem)
     # evenly distribute the ambulances over all the locations
     x = zeros(Int, p.nlocations)
@@ -33,7 +61,7 @@ type DispatchProblem
     DispatchProblem{BM}(emergency_data::DataFrame,
                         hospitals::DataFrame,
                         stations::DataFrame,
-                        coverage::BM,
+                        coverage::BM;
                         turnaround::LogNormal = LogNormal(3.65, 0.3)) =
         new(emergency_data, hospitals, stations, coverage, turnaround)
 end
@@ -43,29 +71,32 @@ function initialize!(problem::DispatchProblem,
     problem.wait_queue = [Int[] for i in 1:size(problem.coverage,1)]
     problem.available = copy(deployment)
     problem.deployment = deepcopy(deployment)
+
+    problem.emergency_calls[:arrival_seconds] =
+        cumsum(problem.emergency_calls[:interarrival_seconds])
+    
     problem
 end
 
-function waiting_for(j::Int, problem::DispatchProblem)
-    earliest_time = Inf
-    earliest_location = 0
-    for i in 1:length(problem.amb_queue)
-        if problem.coverage[j,i]
-            @assert problem.available[i] == 0
-            if problem.deployment[i] > 0
-                @assert !isempty(problem.amb_queue[i])
-                if problem.amb_queue[i][1] < earliest_time
-                    earliest_location = i
-                    earliest_time = problem.amb_queue[i][1]
-                end
-            end
-        end
-    end
-    earliest_location
+function DispatchProblem{BM}(
+        emergency_data::DataFrame,
+        hospitals::DataFrame,
+        stations::DataFrame,
+        coverage::BM,
+        deployment::Vector{Int};
+        turnaround::LogNormal = LogNormal(3.65, 0.3)
+    )
+    problem = DispatchProblem(
+        emergency_data,
+        hospitals,
+        stations,
+        coverage,
+        turnaround=turnaround
+    )
+    initialize!(problem, deployment)
 end
 
 function returned_to!(problem::DispatchProblem, location::Int, t::Int)
-    # @assert problem.deployment[location] > 0
     @assert problem.available[location] >= 0
     problem.available[location] += 1
 end
