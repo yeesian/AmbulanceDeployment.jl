@@ -35,10 +35,10 @@ function call_event!(
         verbose::Bool = false
     )
     if sum(problem.deployment[problem.coverage[nbhd,:]]) == 0
-        verbose && println("no ambulance reachable for call at $nbhd")
+        @assert false "$id: no ambulance reachable for call at $nbhd"
     elseif sum(problem.available[problem.coverage[nbhd,:]]) > 0
-        i = ambulance_for(dispatch, id, problem)
-        @assert i > 0 "dispatch from $i" # assume valid i (enforced by <if> condition) 
+        i = available_for(dispatch, id, problem)
+        @assert i > 0 "$id: dispatch from $i to nbhd $nbhd" # assume valid i (enforced by <if> condition) 
         update_ambulances!(dispatch, i, -1)
         ems.eventlog[id, :dispatch_from] = i
         @assert problem.available[i] > 0
