@@ -2,21 +2,6 @@ abstract DeploymentModel
 
 abstract DispatchModel
 
-function ambulance_for(model::DispatchModel,
-                       id::Int,
-                       problem::DispatchProblem;
-                       verbose::Bool=false)
-    i = available_for(model, id, problem, verbose=verbose)
-    verbose && println("dispatching $i")
-    if i == 0
-        j = problem.emergency_calls[id, :neighborhood]
-        return waiting_for(j, problem)
-    else
-        update_ambulances!(model, i, -1)
-        return i
-    end
-end
-
 abstract RedeployModel
     # Interface
     # =========
@@ -64,7 +49,8 @@ function returning_to!(redeploy::RedeployModel, amb::Int, t::Int)
 end
 
 function redeploying_to!(redeploy::RedeployModel, amb::Int, i::Int, t::Int)
-    # DEBUG: println("redeploying amb $amb from $(redeploy.assignment[amb]) to $i")
+    # DEBUG:
+    println("redeploying amb $amb from $(redeploy.assignment[amb]) to $i")
     ambulances = redeploy.ambulances[redeploy.assignment[amb]]
     @assert !in(amb, redeploy.ambulances[i])
     @assert in(amb, ambulances)
