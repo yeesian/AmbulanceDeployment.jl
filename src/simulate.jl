@@ -51,6 +51,7 @@ function call_event!(
         amb = respond_to!(redeploy, i, t)
         enqueue!(ems.eventqueue, (:arrive, id, t + travel_time, amb), t + travel_time)
     else
+        println(id, ": call from ", nbhd, " queued behind ", problem.wait_queue[nbhd])
         push!(problem.wait_queue[nbhd], id) # queue the emergency call
     end
 end
@@ -147,6 +148,7 @@ function done_event!(
 
         # respond to the person
         let id = shift!(problem.wait_queue[minindex])
+            println(id,": amb ", amb, " redirected from stn ", stn, " to serve ", problem.emergency_calls[id, :neighborhood])
             ems.eventlog[id, :dispatch_from] = stn
             ems.eventlog[id, :waittime] = waittime / 60 # minutes
             travel_time = ceil(Int,60*problem.emergency_calls[id, Symbol("stn$(stn)_min")])
