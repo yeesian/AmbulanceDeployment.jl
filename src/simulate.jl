@@ -14,6 +14,8 @@ function EMSEngine(problem::DispatchProblem)
         scenetime = fill(Inf, ncalls),
         conveytime = fill(Inf, ncalls),
         returntime = fill(Inf, ncalls),
+        return_to = zeros(Int, ncalls),
+        return_type = fill(:station, ncalls),
         hospital = zeros(Int, ncalls),
         ambulance = zeros(Int, ncalls)
     )
@@ -151,6 +153,8 @@ function done_event!(
         # respond to the person
         let id = shift!(problem.wait_queue[minindex])
             println(id,": amb ", amb, " redirected from stn ", stn, " to serve ", problem.emergency_calls[id, :neighborhood])
+            ems.eventlog[id, :return_to] = id
+            ems.eventlog[id, :return_type] = :incident
             ems.eventlog[id, :ambulance] = amb
             ems.eventlog[id, :dispatch_from] = stn
             ems.eventlog[id, :waittime] = waittime / 60 # minutes
@@ -162,6 +166,8 @@ function done_event!(
             enqueue!(ems.eventqueue, (:arrive, id, tarrive, amb), tarrive)
         end
     else # returned to base location
+        ems.eventlog[id, :return_to] = redeploy.assignment[amb]
+        @assert ems.eventlog[id, :return_type] == :station
         returned_to!(redeploy, amb, t)
         returned_to!(problem, stn, t)
         update_ambulances!(dispatch, stn, 1)
