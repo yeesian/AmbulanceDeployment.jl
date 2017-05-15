@@ -14,7 +14,8 @@ function EMSEngine(problem::DispatchProblem)
         scenetime = fill(Inf, ncalls),
         conveytime = fill(Inf, ncalls),
         returntime = fill(Inf, ncalls),
-        hospital = zeros(Int, ncalls)
+        hospital = zeros(Int, ncalls),
+        ambulance = zeros(Int, ncalls)
     )
     eventqueue = PriorityQueue{Tuple{Symbol,Int,Int,Int},Int,Base.Order.ForwardOrdering}()
     for i in 1:nrow(problem.emergency_calls)
@@ -49,6 +50,7 @@ function call_event!(
         ems.eventlog[id, :responsetime] = travel_time / 60 # minutes
         
         amb = respond_to!(redeploy, i, t)
+        ems.eventlog[id, :ambulance] = amb
         enqueue!(ems.eventqueue, (:arrive, id, t + travel_time, amb), t + travel_time)
     else
         println(id, ": call from ", nbhd, " queued behind ", problem.wait_queue[nbhd])
@@ -149,6 +151,7 @@ function done_event!(
         # respond to the person
         let id = shift!(problem.wait_queue[minindex])
             println(id,": amb ", amb, " redirected from stn ", stn, " to serve ", problem.emergency_calls[id, :neighborhood])
+            ems.eventlog[id, :ambulance] = amb
             ems.eventlog[id, :dispatch_from] = stn
             ems.eventlog[id, :waittime] = waittime / 60 # minutes
             travel_time = ceil(Int,60*problem.emergency_calls[id, Symbol("stn$(stn)_min")])
