@@ -57,6 +57,7 @@ type DispatchProblem
 
     wait_queue::Vector{Vector{Int}} # length nbhd
     available::Vector{Int} # length stns
+    redeploy_events::Vector{Tuple{Int,Int,Int,Int}} # amb,from,to,time
     
     DispatchProblem{BM}(emergency_data::DataFrame,
                         hospitals::DataFrame,
@@ -70,6 +71,7 @@ function initialize!(problem::DispatchProblem, deployment::Vector{Int})
     problem.wait_queue = [Int[] for i in 1:size(problem.coverage,1)]
     problem.available = copy(deployment)
     problem.deployment = deepcopy(deployment)
+    problem.redeploy_events = Tuple{Int,Int,Int,Int}[]
 
     problem.emergency_calls[:arrival_seconds] =
         cumsum(problem.emergency_calls[:interarrival_seconds])

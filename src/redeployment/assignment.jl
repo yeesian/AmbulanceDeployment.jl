@@ -176,6 +176,7 @@ function reassign_ambulances!(
             for i in 1:nlocations
                 if stn != i && redeploy.soln[(a-1)*nlocations + i] > 0.5
                     # redeploy an existing ambulance
+                    push!(problem.redeploy_events, (a,redeploy.assignment[a],i,t))
                     if redeploy.status[a] == :available
                         @assert problem.available[redeploy.assignment[a]] > 0
                         problem.available[stn] -= 1
